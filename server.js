@@ -234,13 +234,20 @@ function parseCountsFromHtml(h) {
   if (m) t = parseInt(m[1], 10);
   if (c != null && t != null) return { concurrent: c, total: t };
 
-  // 「856/1251」表記
-  m = h.match(/(\d[\d,]*)\s*<\s*\/\s*span\s*>\s*\/\s*<[^>]*>\s*(\d[\d,]*)/);
-  if (m) return { concurrent: +m[1].replace(/,/g, ''), total: +m[2].replace(/,/g, '') };
+  // タグを除去したテキストから「856 / 1251」を拾う
+  const txt = h
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ');
 
-  m = h.match(/>\s*(\d[\d,]*)\s*\/\s*(\d[\d,]*)\s*</);
-  if (m) return { concurrent: +m[1].replace(/,/g, ''), total: +m[2].replace(/,/g, '') };
-
+  const re = /(?<![\d:.])(\d{1,7})\s*\/\s*(\d{1,7})(?![\d:.])/g;
+  let mm;
+  while ((mm = re.exec(txt))) {
+    const a = parseInt(mm[1], 10), b = parseInt(mm[2], 10);
+    if (b >= a && b > 0 && b < 10000000) return { concurrent: a, total: b };
+  }
   return null;
 }
 
@@ -342,11 +349,18 @@ const server = http.createServer((req, res) => {
           out.movie_page_status = r2.status;
           out.movie_page_len = h.length;
           out.parsed_from_movie_page = parseCountsFromHtml(h);
+          const txt = h
+            .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+            .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/&nbsp;/g, ' ')
+            .replace(/\s+/g, ' ');
           const hits = [];
-          const re = /.{90}view.{90}/gi;
-          let mm, n = 0;
-          while ((mm = re.exec(h)) && n < 12) { hits.push(mm[0].replace(/\s+/g, ' ')); n++; }
-          out.view_snippets = hits;
+          const re2 = /.{0,50}\d{1,7}\s*\/\s*\d{1,7}.{0,50}/g;
+          let mm2, n2 = 0;
+          while ((mm2 = re2.exec(txt)) && n2 < 10) { hits.push(mm2[0]); n2++; }
+          out.slash_snippets = hits;
+          out.text_len = txt.length;
         } catch (e) { out.movie_page_error = e.message; }
       }
       out.parsed = await fetchBroadcastStats(uid);
