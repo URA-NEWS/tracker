@@ -250,5 +250,5 @@ server.listen(PORT, () => {
   console.log(`Monitoring ${config.broadcasters.length} broadcasters`);
 });
 
-setInterval(monitorBroadcasters, 30000);
+setInterval(monitorBroadcasters, 15000);
 monitorBroadcasters();
