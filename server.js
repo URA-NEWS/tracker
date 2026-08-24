@@ -268,6 +268,38 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+
+  // 生データ確認用: /api/debug/<user_id>
+  if (pathname.startsWith('/api/debug/')) {
+    (async () => {
+      const uid = decodeURIComponent(pathname.replace('/api/debug/', ''));
+      const out = { user_id: uid };
+      try {
+        const r = await fetch(`https://frontendapi.twitcasting.tv/users/${encodeURIComponent(uid)}/latest-movie`, {
+          headers: { 'User-Agent': UA, Accept: 'application/json' }
+        });
+        out.frontendapi_status = r.status;
+        const t = await r.text();
+        try { out.frontendapi_body = JSON.parse(t); } catch (e) { out.frontendapi_body = t.slice(0, 800); }
+      } catch (e) { out.frontendapi_error = e.message; }
+      try {
+        const r2 = await fetch(`https://twitcasting.tv/${encodeURIComponent(uid)}`, { headers: { 'User-Agent': UA } });
+        const h = await r2.text();
+        out.html_status = r2.status;
+        out.html_is_onlive_attr = /data-is-onlive=["\']true["\']/i.test(h);
+        out.html_is_on_live_json = /"is_on_live"\s*:\s*true/i.test(h);
+        const cur = h.match(/"current_view_count"\s*:\s*(\d+)/);
+        const tot = h.match(/"total_view_count"\s*:\s*(\d+)/);
+        out.html_current_view_count = cur ? cur[1] : null;
+        out.html_total_view_count = tot ? tot[1] : null;
+      } catch (e) { out.html_error = e.message; }
+      out.parsed = await fetchBroadcastStats(uid);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(out, null, 2));
+    })();
+    return;
+  }
+
   if (pathname === '/api/twitcas/stats' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(broadcasterStats));
