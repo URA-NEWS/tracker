@@ -131,29 +131,56 @@ async function persistSample(uid, bid, s) {
 // ---------- ツイキャス: 名前・アイコン ----------
 async function fetchUserInfo(userId) {
   try {
-    const res = await fetch(`https://twitcasting.tv/${encodeURIComponent(userId)}`, { headers: { 'User-Agent': UA } });
+    const res = await fetch(`https://twitcasting.tv/${encodeURIComponent(userId)}`, { headers: { 'User-Agent': UA, 'Accept-Language': 'ja' } });
     if (!res.ok) return null;
     const html = await res.text();
     if (html.includes('お探しのページは見つかりません') || html.includes('Page Not Found')) return null;
 
     let name = null, image = null;
-    const ogTitle = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i);
-    if (ogTitle) name = ogTitle[1].replace(/\s*のライブ配信.*$/, '').replace(/\s*\(@.*$/, '').trim();
-    if (!name) {
-      const t = html.match(/<title>([^<]+)<\/title>/i);
-      if (t) name = t[1].split(/[-|｜]/)[0].trim();
+
+    // 配信者名: <title> の "○○ (@id) 's Live" から取る（og:title は配信タイトルなので使わない）
+    const t = html.match(/<title>([\s\S]*?)<\/title>/i);
+    if (t) {
+      let raw = t[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").trim();
+      const byAt = raw.match(/^(.*?)\s*\(@[^)]+\)/);
+      if (byAt) name = byAt[1].trim();
+      if (!name) name = raw.split(/\s*[-|｜]\s*/)[0].trim();
     }
-    const ogImage = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
-    if (ogImage) image = ogImage[1];
+
+    // アイコン: プロフィール画像（image3s のパス）。og:image は配信サムネなので使わない
+    let m = html.match(/https?:\/\/imagegw\d*\.twitcasting\.tv\/image3s\/[^"'\s\\)]+/);
+    if (m) image = m[0];
     if (!image) {
-      const img = html.match(/https:\/\/imagegw\d*\.twitcasting\.tv\/image\d*\/[^"'\s]+/);
-      if (img) image = img[0];
+      m = html.match(/https?:\/\/[^"'\s\\)]*pbs\.twimg\.com\/profile_images\/[^"'\s\\)]+/);
+      if (m) image = m[0];
     }
+    if (!image) {
+      m = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
+      if (m) image = m[1];
+    }
+    if (image) image = image.replace(/^http:/, 'https:').replace(/_bigger\.(jpg|png)/, '_400x400.$1');
+
     return { name: name || userId, image: image || null };
   } catch (e) {
     console.error(`fetchUserInfo (${userId}):`, e.message);
     return null;
   }
+}
+
+// 起動時に既存配信者の名前・アイコンを更新
+async function refreshAllUserInfo() {
+  for (const b of config.broadcasters) {
+    try {
+      const info = await fetchUserInfo(b.user_id);
+      if (!info) continue;
+      if (info.name !== b.name || info.image !== b.image) {
+        b.name = info.name; b.image = info.image;
+        await persistBroadcasterAdd(b);
+        console.log(`[${b.user_id}] プロフィール更新: ${b.name}`);
+      }
+    } catch (e) { console.error('refresh:', e.message); }
+  }
+  if (!USE_SB) saveJson(CONFIG_FILE, config);
 }
 
 // ---------- ツイキャス: 配信状態・視聴数 ----------
@@ -442,6 +469,8 @@ bootstrap().then(() => {
   server.listen(PORT, () => {
     console.log(`Twitcas Tracker on :${PORT} / storage=${USE_SB ? 'supabase' : 'local'} / broadcasters=${config.broadcasters.length}`);
   });
+  refreshAllUserInfo();
+  setInterval(refreshAllUserInfo, 6 * 60 * 60 * 1000);
   setInterval(monitorBroadcasters, 15000);
   monitorBroadcasters();
 
