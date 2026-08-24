@@ -1,613 +1,401 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>📊 ツイキャス配信者追跡</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ツイキャス配信者トラッカー</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0b0e14; --panel:#141926; --panel2:#1b2233; --line:#252d40;
+  --txt:#e6ebf5; --sub:#8b95ad; --accent:#5b8cff; --live:#ff3b5c;
+  --ok:#2ee6a8; --warn:#ffb340;
+}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
+  background:var(--bg); color:var(--txt); min-height:100vh;
+}
+body::before{
+  content:""; position:fixed; inset:0; pointer-events:none;
+  background:radial-gradient(900px 500px at 15% -10%,rgba(91,140,255,.12),transparent 60%),
+             radial-gradient(700px 400px at 90% 0%,rgba(255,59,92,.08),transparent 60%);
+}
+.wrap{position:relative;max-width:1440px;margin:0 auto;padding:28px 24px 60px}
 
-    :root {
-      --primary: #6366f1;
-      --primary-dark: #4f46e5;
-      --secondary: #8b5cf6;
-      --success: #10b981;
-      --danger: #ef4444;
-      --warning: #f59e0b;
-      --dark: #1f2937;
-      --light: #f3f4f6;
-      --border: #e5e7eb;
-    }
+/* header */
+.hd{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:28px}
+.hd h1{font-size:20px;font-weight:800;letter-spacing:.02em}
+.hd .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 12px var(--ok);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.hd .meta{margin-left:auto;display:flex;align-items:center;gap:14px;font-size:12px;color:var(--sub)}
+.chip{background:var(--panel);border:1px solid var(--line);padding:6px 12px;border-radius:999px;font-size:12px;color:var(--sub)}
 
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      min-height: 100vh;
-      padding: 20px;
-      color: var(--dark);
-    }
+/* add bar */
+.addbar{display:flex;gap:10px;margin-bottom:26px;flex-wrap:wrap}
+.addbar input{
+  flex:1;min-width:260px;background:var(--panel);border:1px solid var(--line);
+  color:var(--txt);padding:12px 16px;border-radius:12px;font-size:14px;outline:none;transition:.2s
+}
+.addbar input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(91,140,255,.15)}
+.addbar input::placeholder{color:#5a6480}
+.btn{
+  background:var(--accent);color:#fff;border:0;padding:12px 22px;border-radius:12px;
+  font-size:14px;font-weight:700;cursor:pointer;transition:.2s;white-space:nowrap
+}
+.btn:hover{filter:brightness(1.12);transform:translateY(-1px)}
+.btn.ghost{background:var(--panel);color:var(--sub);border:1px solid var(--line)}
+.btn.ghost:hover{color:var(--txt)}
 
-    .container {
-      max-width: 1400px;
-      margin: 0 auto;
-    }
+.err{background:rgba(255,59,92,.12);border:1px solid rgba(255,59,92,.35);color:#ff8fa3;
+  padding:12px 16px;border-radius:12px;margin-bottom:20px;font-size:13px}
 
-    header {
-      background: white;
-      border-radius: 16px;
-      padding: 30px;
-      margin-bottom: 30px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-    }
+/* cards */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;margin-bottom:34px}
+.card{
+  background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px;
+  cursor:pointer;transition:.22s;position:relative;overflow:hidden
+}
+.card:hover{transform:translateY(-3px);border-color:#3a4665;box-shadow:0 12px 32px rgba(0,0,0,.45)}
+.card.live{border-color:rgba(255,59,92,.45)}
+.card.live::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(180deg,rgba(255,59,92,.10),transparent 45%)
+}
+.card .top{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+.avatar{width:48px;height:48px;border-radius:14px;object-fit:cover;background:var(--panel2);flex:0 0 48px}
+.nm{font-size:15px;font-weight:700;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.uid{font-size:11px;color:var(--sub);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.badge{
+  position:absolute;top:14px;right:14px;font-size:10px;font-weight:800;letter-spacing:.06em;
+  padding:4px 9px;border-radius:999px;background:var(--panel2);color:var(--sub);border:1px solid var(--line)
+}
+.badge.on{background:var(--live);color:#fff;border-color:transparent}
+.nums{display:grid;grid-template-columns:1fr 1fr;gap:10px;position:relative;z-index:1}
+.num{background:var(--panel2);border-radius:12px;padding:11px 12px}
+.num .l{font-size:10px;color:var(--sub);letter-spacing:.05em;margin-bottom:5px}
+.num .v{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+.num .v.hl{color:var(--live)}
+.spark{margin-top:12px;height:38px;position:relative;z-index:1}
+.del{
+  position:absolute;bottom:14px;right:14px;background:transparent;border:0;color:#4a5570;
+  font-size:16px;cursor:pointer;padding:4px;opacity:0;transition:.2s;z-index:2
+}
+.card:hover .del{opacity:1}
+.del:hover{color:var(--live)}
 
-    header h1 {
-      font-size: 28px;
-      color: var(--primary);
-      margin-bottom: 10px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
+.empty{grid-column:1/-1;text-align:center;padding:60px 20px;color:var(--sub);font-size:14px;
+  border:1px dashed var(--line);border-radius:18px}
 
-    header p {
-      color: #6b7280;
-      font-size: 14px;
-    }
+/* combined charts */
+.sect{font-size:13px;font-weight:700;color:var(--sub);letter-spacing:.08em;margin:0 0 14px}
+.chartrow{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:900px){.chartrow{grid-template-columns:1fr}}
+.cbox{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px}
+.cbox h3{font-size:13px;font-weight:700;margin-bottom:14px;color:var(--txt)}
+.cbox canvas{height:260px!important}
 
-    .main-content {
-      display: grid;
-      grid-template-columns: 1fr 2fr;
-      gap: 30px;
-      margin-bottom: 30px;
-    }
-
-    @media (max-width: 1024px) {
-      .main-content {
-        grid-template-columns: 1fr;
-      }
-    }
-
-    .sidebar {
-      background: white;
-      border-radius: 16px;
-      padding: 25px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-      height: fit-content;
-    }
-
-    .sidebar h2 {
-      font-size: 18px;
-      color: var(--dark);
-      margin-bottom: 20px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .add-broadcaster-form {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      margin-bottom: 25px;
-    }
-
-    .form-group {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-
-    .form-group label {
-      font-size: 12px;
-      font-weight: 600;
-      color: #6b7280;
-      text-transform: uppercase;
-    }
-
-    .form-group input {
-      padding: 10px 12px;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      font-size: 14px;
-      transition: all 0.3s;
-    }
-
-    .form-group input:focus {
-      outline: none;
-      border-color: var(--primary);
-      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
-    }
-
-    .form-hint {
-      font-size: 11px;
-      color: #9ca3af;
-      margin-top: -4px;
-    }
-
-    .btn {
-      padding: 10px 16px;
-      border: none;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.3s;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-    }
-
-    .btn-primary {
-      background: var(--primary);
-      color: white;
-    }
-
-    .btn-primary:hover {
-      background: var(--primary-dark);
-      transform: translateY(-2px);
-      box-shadow: 0 8px 16px rgba(99, 102, 241, 0.3);
-    }
-
-    .btn-danger {
-      background: #fee2e2;
-      color: var(--danger);
-      padding: 6px 10px;
-      font-size: 12px;
-    }
-
-    .btn-danger:hover {
-      background: #fecaca;
-    }
-
-    .broadcaster-list {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-
-    .broadcaster-item {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 12px;
-      background: var(--light);
-      border-radius: 12px;
-      border-left: 3px solid var(--primary);
-      position: relative;
-      overflow: hidden;
-    }
-
-    .broadcaster-item.live {
-      border-left-color: var(--success);
-      background: #f0fdf4;
-    }
-
-    .broadcaster-item img {
-      width: 40px;
-      height: 40px;
-      border-radius: 8px;
-      background: var(--border);
-      object-fit: cover;
-    }
-
-    .broadcaster-info {
-      flex: 1;
-      min-width: 0;
-    }
-
-    .broadcaster-name {
-      font-size: 14px;
-      font-weight: 600;
-      color: var(--dark);
-      word-break: break-word;
-    }
-
-    .broadcaster-status {
-      font-size: 11px;
-      color: #9ca3af;
-      margin-top: 2px;
-    }
-
-    .live-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      padding: 4px 8px;
-      background: var(--success);
-      color: white;
-      border-radius: 6px;
-      font-size: 10px;
-      font-weight: 600;
-      position: absolute;
-      top: 8px;
-      right: 8px;
-    }
-
-    .charts-section {
-      background: white;
-      border-radius: 16px;
-      padding: 25px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-    }
-
-    .chart-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-      gap: 30px;
-      margin-bottom: 30px;
-    }
-
-    @media (max-width: 768px) {
-      .chart-grid {
-        grid-template-columns: 1fr;
-      }
-    }
-
-    .chart-wrapper {
-      background: var(--light);
-      padding: 20px;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-    }
-
-    .chart-title {
-      font-size: 16px;
-      font-weight: 600;
-      color: var(--dark);
-      margin-bottom: 15px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    canvas {
-      max-height: 350px;
-    }
-
-    .controls {
-      display: flex;
-      gap: 10px;
-      margin-bottom: 25px;
-      flex-wrap: wrap;
-      justify-content: center;
-      padding: 15px 0;
-      border-top: 1px solid var(--border);
-      border-bottom: 1px solid var(--border);
-    }
-
-    .loading {
-      text-align: center;
-      padding: 40px 20px;
-      color: #9ca3af;
-      font-size: 14px;
-    }
-
-    .error {
-      background: #fee2e2;
-      color: var(--danger);
-      padding: 15px;
-      border-radius: 8px;
-      margin-bottom: 20px;
-      border-left: 4px solid var(--danger);
-      font-size: 14px;
-    }
-
-    .empty-state {
-      text-align: center;
-      padding: 40px 20px;
-    }
-
-    .empty-state-icon {
-      font-size: 48px;
-      margin-bottom: 10px;
-    }
-
-    .empty-state-text {
-      color: #6b7280;
-      font-size: 14px;
-    }
-  </style>
+/* modal */
+.mask{
+  position:fixed;inset:0;background:rgba(5,7,12,.78);backdrop-filter:blur(6px);
+  display:none;align-items:center;justify-content:center;padding:24px;z-index:50
+}
+.mask.show{display:flex}
+.modal{
+  background:var(--panel);border:1px solid var(--line);border-radius:22px;width:100%;
+  max-width:980px;max-height:88vh;overflow-y:auto;padding:26px
+}
+.modal .mh{display:flex;align-items:center;gap:14px;margin-bottom:22px}
+.modal .mh .avatar{width:60px;height:60px;flex:0 0 60px;border-radius:18px}
+.modal .mh h2{font-size:20px;font-weight:800}
+.modal .mh .uid{font-size:12px}
+.x{margin-left:auto;background:var(--panel2);border:1px solid var(--line);color:var(--sub);
+  width:34px;height:34px;border-radius:10px;cursor:pointer;font-size:16px}
+.x:hover{color:var(--txt)}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:22px}
+.kpi{background:var(--panel2);border-radius:14px;padding:14px}
+.kpi .l{font-size:10px;color:var(--sub);letter-spacing:.05em;margin-bottom:6px}
+.kpi .v{font-size:24px;font-weight:800;font-variant-numeric:tabular-nums}
+.modal canvas{height:280px!important}
+.hist{margin-top:24px}
+.hrow{display:flex;align-items:center;gap:12px;padding:11px 14px;background:var(--panel2);
+  border-radius:12px;margin-bottom:8px;font-size:13px}
+.hrow .d{color:var(--sub);font-size:12px;min-width:130px}
+.hrow .s{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:700}
+.trend{font-size:12px;font-weight:700;padding:3px 8px;border-radius:6px}
+.up{background:rgba(46,230,168,.15);color:var(--ok)}
+.down{background:rgba(255,59,92,.15);color:var(--live)}
+.flat{background:var(--panel);color:var(--sub)}
+</style>
 </head>
 <body>
-  <div class="container">
-    <header>
-      <h1>📊 ツイキャス配信者追跡ツール</h1>
-      <p>複数の配信者の同時接続数・総来場者数をリアルタイムで監視・グラフ化</p>
-    </header>
+<div class="wrap">
 
-    <div class="main-content">
-      <!-- サイドバー -->
-      <div class="sidebar">
-        <h2>➕ 配信者を追加</h2>
-        
-        <div class="add-broadcaster-form">
-          <div class="form-group">
-            <label>ツイキャス URL または user_id</label>
-            <input 
-              type="text" 
-              id="broadcasterInput" 
-              placeholder="例: https://twitcasting.tv/love1001only"
-            >
-            <div class="form-hint">URL を貼り付けるか、user_id を入力してください</div>
-          </div>
-          <button class="btn btn-primary" onclick="addBroadcaster()">
-            🔗 追加する
-          </button>
-        </div>
-
-        <h2 style="margin-top: 30px;">📺 追跡中の配信者</h2>
-        <div id="broadcasterList" class="broadcaster-list">
-          <div class="loading">読み込み中...</div>
-        </div>
-      </div>
-
-      <!-- メインコンテンツ -->
-      <div class="charts-section">
-        <div class="controls">
-          <button class="btn btn-primary" onclick="refreshData()">🔄 更新</button>
-          <button class="btn btn-primary" onclick="exportData()">📥 データ出力</button>
-        </div>
-
-        <div id="errorContainer"></div>
-
-        <div class="chart-grid">
-          <div class="chart-wrapper">
-            <div class="chart-title">📈 同時接続数の推移</div>
-            <canvas id="concurrentChart"></canvas>
-          </div>
-
-          <div class="chart-wrapper">
-            <div class="chart-title">👥 総来場者数の推移</div>
-            <canvas id="totalChart"></canvas>
-          </div>
-        </div>
-      </div>
+  <div class="hd">
+    <span class="dot"></span>
+    <h1>ツイキャス配信者トラッカー</h1>
+    <div class="meta">
+      <span class="chip" id="liveCount">-</span>
+      <span id="lastUpdate">—</span>
+      <button class="btn ghost" onclick="exportData()">エクスポート</button>
     </div>
   </div>
 
-  <script>
-    const API_URL = window.location.origin + '/api';
-    let config = {};
-    let statsData = {};
-    let concurrentChart = null;
-    let totalChart = null;
+  <div class="addbar">
+    <input id="inp" placeholder="https://twitcasting.tv/xxxxx を貼り付け（Enterで追加）">
+    <button class="btn" onclick="addBroadcaster()">追加</button>
+  </div>
 
-    // URL から user_id を抽出
-    function extractUserId(input) {
-      // URL の場合
-      const urlMatch = input.match(/twitcasting\.tv\/(.+)/);
-      if (urlMatch) {
-        return urlMatch[1].split('?')[0].trim();
-      }
-      // user_id の場合
-      return input.trim();
-    }
+  <div id="err"></div>
 
-    // 配信者を追加
-    async function addBroadcaster() {
-      const input = document.getElementById('broadcasterInput').value.trim();
-      if (!input) {
-        showError('URL または user_id を入力してください');
-        return;
-      }
+  <div class="grid" id="grid"></div>
 
-      const userId = extractUserId(input);
-      try {
-        const response = await fetch(`${API_URL}/config/broadcasters`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ user_id: userId })
-        });
+  <div class="sect">全体比較</div>
+  <div class="chartrow">
+    <div class="cbox"><h3>同時接続数</h3><canvas id="c1"></canvas></div>
+    <div class="cbox"><h3>総来場者数</h3><canvas id="c2"></canvas></div>
+  </div>
+</div>
 
-        const result = await response.json();
-        if (!response.ok) {
-          throw new Error(result.error || 'エラーが発生しました');
+<div class="mask" id="mask" onclick="if(event.target===this)closeModal()">
+  <div class="modal" id="modal"></div>
+</div>
+
+<script>
+const API = location.origin + '/api';
+let config = { broadcasters: [] };
+let stats = {};
+let c1, c2, sparks = {}, dChart = null, openUid = null;
+const COLORS = ['#5b8cff','#ff3b5c','#2ee6a8','#ffb340','#c17bff','#38d9f0','#ff7ab8','#9ee65a'];
+
+const esc = s => String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const fmt = n => (n==null||isNaN(n))?'—':Number(n).toLocaleString('ja-JP');
+const PH = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2260%22 height=%2260%22%3E%3Crect fill=%22%231b2233%22 width=%2260%22 height=%2260%22/%3E%3C/svg%3E';
+
+function extractUserId(v){
+  v = v.trim();
+  const m = v.match(/twitcasting\.tv\/([^/?#]+)/);
+  return m ? m[1] : v;
+}
+
+function samplesOf(s){
+  if(!s) return [];
+  const a=[];
+  (s.history||[]).forEach(b=>a.push(...(b.samples||[])));
+  if(s.current_broadcast) a.push(...(s.current_broadcast.samples||[]));
+  return a.sort((x,y)=>new Date(x.timestamp)-new Date(y.timestamp));
+}
+const isLive = s => !!(s && s.current_broadcast);
+function latest(s){ const a=samplesOf(s); return a.length?a[a.length-1]:null; }
+
+async function loadAll(){
+  try{
+    const [c,st] = await Promise.all([
+      fetch(API+'/config').then(r=>r.json()),
+      fetch(API+'/twitcas/stats').then(r=>r.json())
+    ]);
+    config = c && c.broadcasters ? c : {broadcasters:[]};
+    stats = st || {};
+    render();
+    document.getElementById('lastUpdate').textContent =
+      new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  }catch(e){ showErr('取得エラー: '+e.message); }
+}
+
+function render(){
+  renderCards();
+  renderCombined();
+  if(openUid) renderModal(openUid);
+  const n = config.broadcasters.filter(b=>isLive(stats[b.user_id])).length;
+  document.getElementById('liveCount').textContent = `配信中 ${n} / ${config.broadcasters.length}`;
+}
+
+function renderCards(){
+  const g = document.getElementById('grid');
+  if(!config.broadcasters.length){
+    g.innerHTML = '<div class="empty">上のバーに配信者URLを貼って追加してください</div>';
+    return;
+  }
+  g.innerHTML = config.broadcasters.map(b=>{
+    const s = stats[b.user_id], live = isLive(s), l = latest(s);
+    return `
+    <div class="card ${live?'live':''}" onclick="openModal('${esc(b.user_id)}')">
+      <div class="badge ${live?'on':''}">${live?'● LIVE':'OFFLINE'}</div>
+      <div class="top">
+        <img class="avatar" src="${esc(b.image||PH)}" onerror="this.src='${PH}'">
+        <div style="min-width:0">
+          <div class="nm">${esc(b.name)}</div>
+          <div class="uid">${esc(b.user_id)}</div>
+        </div>
+      </div>
+      <div class="nums">
+        <div class="num"><div class="l">同時接続</div><div class="v ${live?'hl':''}">${fmt(l&&l.concurrent)}</div></div>
+        <div class="num"><div class="l">総来場者</div><div class="v">${fmt(l&&l.total)}</div></div>
+      </div>
+      <div class="spark"><canvas id="sp_${cssId(b.user_id)}"></canvas></div>
+      <button class="del" onclick="event.stopPropagation();removeBroadcaster('${esc(b.user_id)}')">✕</button>
+    </div>`;
+  }).join('');
+  config.broadcasters.forEach((b,i)=>drawSpark(b,i));
+}
+
+const cssId = u => u.replace(/[^a-zA-Z0-9_]/g,'_');
+
+function drawSpark(b,i){
+  const el = document.getElementById('sp_'+cssId(b.user_id));
+  if(!el) return;
+  const a = samplesOf(stats[b.user_id]).slice(-40);
+  if(sparks[b.user_id]){ sparks[b.user_id].destroy(); delete sparks[b.user_id]; }
+  if(a.length<2) return;
+  sparks[b.user_id] = new Chart(el.getContext('2d'),{
+    type:'line',
+    data:{labels:a.map(()=>''),datasets:[{
+      data:a.map(s=>s.concurrent),borderColor:COLORS[i%COLORS.length],
+      backgroundColor:COLORS[i%COLORS.length]+'22',borderWidth:2,pointRadius:0,tension:.35,fill:true
+    }]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
+      plugins:{legend:{display:false},tooltip:{enabled:false}},
+      scales:{x:{display:false},y:{display:false}}}
+  });
+}
+
+function renderCombined(){
+  const ds1=[],ds2=[]; let maxLen=1;
+  config.broadcasters.forEach((b,i)=>{
+    const a=samplesOf(stats[b.user_id]); if(!a.length) return;
+    maxLen=Math.max(maxLen,a.length);
+    const c=COLORS[i%COLORS.length];
+    const base={label:b.name,borderColor:c,backgroundColor:c+'20',borderWidth:2,pointRadius:0,tension:.3,fill:false};
+    ds1.push({...base,data:a.map(s=>s.concurrent)});
+    ds2.push({...base,data:a.map(s=>s.total)});
+  });
+  const labels=Array.from({length:maxLen},(_,i)=>i+1);
+  const opt={responsive:true,maintainAspectRatio:false,animation:{duration:400},
+    plugins:{legend:{display:true,position:'bottom',labels:{color:'#8b95ad',boxWidth:10,font:{size:11}}}},
+    scales:{
+      x:{ticks:{display:false},grid:{color:'#1e2536'}},
+      y:{beginAtZero:true,ticks:{color:'#8b95ad',font:{size:11}},grid:{color:'#1e2536'}}
+    }};
+  if(c1)c1.destroy(); if(c2)c2.destroy();
+  c1=new Chart(document.getElementById('c1'),{type:'line',data:{labels,datasets:ds1},options:opt});
+  c2=new Chart(document.getElementById('c2'),{type:'line',data:{labels,datasets:ds2},options:opt});
+}
+
+function openModal(uid){ openUid=uid; document.getElementById('mask').classList.add('show'); renderModal(uid); }
+function closeModal(){ openUid=null; document.getElementById('mask').classList.remove('show');
+  if(dChart){dChart.destroy();dChart=null;} }
+
+function renderModal(uid){
+  const b = config.broadcasters.find(x=>x.user_id===uid); if(!b) return closeModal();
+  const s = stats[uid], live=isLive(s), a=samplesOf(s), l=latest(s);
+  const peak = a.length?Math.max(...a.map(x=>x.concurrent)):null;
+  const avg = a.length?Math.round(a.reduce((t,x)=>t+x.concurrent,0)/a.length):null;
+
+  const hist=(s&&s.history)?[...s.history].reverse():[];
+  const histAvg = hist.map(h=>{
+    const sm=h.samples||[];
+    return {h, avg: sm.length?Math.round(sm.reduce((t,x)=>t+x.concurrent,0)/sm.length):0,
+            total: sm.length?sm[sm.length-1].total:0};
+  });
+
+  document.getElementById('modal').innerHTML = `
+    <div class="mh">
+      <img class="avatar" src="${esc(b.image||PH)}" onerror="this.src='${PH}'">
+      <div style="min-width:0">
+        <h2>${esc(b.name)}</h2>
+        <div class="uid">${esc(b.user_id)} ・ ${live?'<span style="color:var(--live);font-weight:700">配信中</span>':'オフライン'}</div>
+      </div>
+      <button class="x" onclick="closeModal()">✕</button>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><div class="l">現在の同時接続</div><div class="v">${fmt(l&&l.concurrent)}</div></div>
+      <div class="kpi"><div class="l">総来場者</div><div class="v">${fmt(l&&l.total)}</div></div>
+      <div class="kpi"><div class="l">最高同接</div><div class="v">${fmt(peak)}</div></div>
+      <div class="kpi"><div class="l">平均同接</div><div class="v">${fmt(avg)}</div></div>
+      <div class="kpi"><div class="l">記録配信数</div><div class="v">${hist.length}</div></div>
+    </div>
+    <div class="cbox"><h3>推移（同時接続 / 総来場者）</h3><canvas id="dc"></canvas></div>
+    <div class="hist">
+      <div class="sect" style="margin-top:22px">配信ごとの平均同接</div>
+      ${histAvg.length? histAvg.map((x,i)=>{
+        const prev = histAvg[i+1];
+        let t='<span class="trend flat">—</span>';
+        if(prev){
+          const d = x.avg - prev.avg;
+          const p = prev.avg? Math.round(d/prev.avg*100):0;
+          t = d>0?`<span class="trend up">▲ ${p}%</span>`:d<0?`<span class="trend down">▼ ${Math.abs(p)}%</span>`:'<span class="trend flat">±0</span>';
         }
+        return `<div class="hrow">
+          <span class="d">${new Date(x.h.started_at).toLocaleString('ja-JP',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</span>
+          ${t}
+          <span class="s">平均 ${fmt(x.avg)} ／ 総 ${fmt(x.total)}</span>
+        </div>`;
+      }).join('') : '<div class="empty">まだ配信記録がありません</div>'}
+    </div>`;
 
-        document.getElementById('broadcasterInput').value = '';
-        await loadConfig();
-        renderBroadcasterList();
-      } catch (error) {
-        showError(`配信者追加エラー: ${error.message}`);
-      }
-    }
+  if(dChart){dChart.destroy();dChart=null;}
+  if(a.length>1){
+    dChart=new Chart(document.getElementById('dc'),{
+      type:'line',
+      data:{labels:a.map(x=>new Date(x.timestamp).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'})),
+        datasets:[
+          {label:'同時接続',data:a.map(x=>x.concurrent),borderColor:'#ff3b5c',backgroundColor:'#ff3b5c22',
+           borderWidth:2,pointRadius:0,tension:.3,fill:true,yAxisID:'y'},
+          {label:'総来場者',data:a.map(x=>x.total),borderColor:'#5b8cff',backgroundColor:'transparent',
+           borderWidth:2,pointRadius:0,tension:.3,yAxisID:'y1'}
+        ]},
+      options:{responsive:true,maintainAspectRatio:false,animation:{duration:400},
+        interaction:{mode:'index',intersect:false},
+        plugins:{legend:{labels:{color:'#8b95ad',boxWidth:10,font:{size:11}}}},
+        scales:{
+          x:{ticks:{color:'#8b95ad',maxTicksLimit:8,font:{size:10}},grid:{color:'#1e2536'}},
+          y:{position:'left',beginAtZero:true,ticks:{color:'#ff3b5c',font:{size:10}},grid:{color:'#1e2536'}},
+          y1:{position:'right',beginAtZero:true,ticks:{color:'#5b8cff',font:{size:10}},grid:{display:false}}
+        }}
+    });
+  }
+}
 
-    // 配信者を削除
-    async function removeBroadcaster(userId) {
-      if (!confirm('この配信者を削除しますか？')) return;
+async function addBroadcaster(){
+  const el=document.getElementById('inp'), v=el.value.trim();
+  if(!v) return showErr('URLを入力してください');
+  try{
+    const r=await fetch(API+'/config/broadcasters',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({user_id:extractUserId(v)})});
+    const j=await r.json();
+    if(!r.ok) throw new Error(j.error||'追加できませんでした');
+    el.value=''; document.getElementById('err').innerHTML='';
+    await loadAll();
+  }catch(e){ showErr('追加エラー: '+e.message); }
+}
 
-      try {
-        await fetch(`${API_URL}/config/broadcasters/${encodeURIComponent(userId)}`, {
-          method: 'DELETE'
-        });
-        await loadConfig();
-        await refreshData();
-        renderBroadcasterList();
-      } catch (error) {
-        showError(`削除エラー: ${error.message}`);
-      }
-    }
+async function removeBroadcaster(uid){
+  if(!confirm('削除しますか？（記録も消えます）')) return;
+  try{
+    await fetch(API+'/config/broadcasters/'+encodeURIComponent(uid),{method:'DELETE'});
+    if(openUid===uid) closeModal();
+    await loadAll();
+  }catch(e){ showErr('削除エラー: '+e.message); }
+}
 
-    // 設定を読み込む
-    async function loadConfig() {
-      try {
-        const response = await fetch(`${API_URL}/config`);
-        config = await response.json();
-      } catch (error) {
-        console.error('設定読み込みエラー:', error);
-      }
-    }
+function exportData(){
+  const blob=new Blob([JSON.stringify({config,stats},null,2)],{type:'application/json'});
+  const u=URL.createObjectURL(blob), a=document.createElement('a');
+  a.href=u; a.download=`twitcas-${new Date().toISOString().slice(0,10)}.json`; a.click();
+  URL.revokeObjectURL(u);
+}
 
-    // データを更新
-    async function refreshData() {
-      try {
-        const response = await fetch(`${API_URL}/twitcas/stats`);
-        statsData = await response.json();
-        renderBroadcasterList();
-        updateCharts();
-      } catch (error) {
-        showError(`データ取得エラー: ${error.message}`);
-      }
-    }
+function showErr(m){
+  document.getElementById('err').innerHTML=`<div class="err">${esc(m)}</div>`;
+  setTimeout(()=>{const e=document.getElementById('err'); if(e)e.innerHTML='';},6000);
+}
 
-    // 配信者リストを描画
-    function renderBroadcasterList() {
-      const list = document.getElementById('broadcasterList');
-      
-      if (!config.broadcasters || config.broadcasters.length === 0) {
-        list.innerHTML = `
-          <div class="empty-state">
-            <div class="empty-state-icon">📭</div>
-            <div class="empty-state-text">配信者を追加してください</div>
-          </div>
-        `;
-        return;
-      }
+document.getElementById('inp').addEventListener('keydown',e=>{if(e.key==='Enter')addBroadcaster();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
 
-      list.innerHTML = config.broadcasters.map(bc => {
-        const stats = statsData[bc.user_id];
-        const isLive = stats?.current_broadcast !== null;
-        const statusText = isLive ? '配信中' : 'オフライン';
-
-        let currentStats = '---';
-        if (isLive && stats.current_broadcast.samples.length > 0) {
-          const latest = stats.current_broadcast.samples[stats.current_broadcast.samples.length - 1];
-          currentStats = `${latest.concurrent} / ${latest.total}`;
-        }
-
-        return `
-          <div class="broadcaster-item ${isLive ? 'live' : ''}">
-            <img 
-              src="${bc.image || 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2240%22 height=%2240%22%3E%3Crect fill=%22%23e5e7eb%22 width=%2240%22 height=%2240%22/%3E%3C/svg%3E'}" 
-              alt="${bc.name}"
-              onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2240%22 height=%2240%22%3E%3Crect fill=%22%23e5e7eb%22 width=%2240%22 height=%2240%22/%3E%3C/svg%3E'"
-            >
-            <div class="broadcaster-info">
-              <div class="broadcaster-name">${bc.name}</div>
-              <div class="broadcaster-status">${currentStats}</div>
-            </div>
-            ${isLive ? '<div class="live-badge">🔴 配信中</div>' : ''}
-            <button class="btn btn-danger" onclick="removeBroadcaster('${bc.user_id}')">✕</button>
-          </div>
-        `;
-      }).join('');
-    }
-
-    // グラフを更新
-    function updateCharts() {
-      const concurrentCtx = document.getElementById('concurrentChart').getContext('2d');
-      const totalCtx = document.getElementById('totalChart').getContext('2d');
-
-      const colors = ['#6366f1', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444'];
-      const datasets = { concurrent: [], total: [] };
-      let colorIdx = 0;
-
-      for (const bc of (config.broadcasters || [])) {
-        const stats = statsData[bc.user_id];
-        if (!stats || !stats.history.length && !stats.current_broadcast) continue;
-
-        const allSamples = [];
-        (stats.history || []).forEach(broadcast => {
-          (broadcast.samples || []).forEach(sample => {
-            allSamples.push(sample);
-          });
-        });
-
-        if (stats.current_broadcast?.samples) {
-          allSamples.push(...stats.current_broadcast.samples);
-        }
-
-        if (allSamples.length === 0) {
-          colorIdx++;
-          continue;
-        }
-
-        allSamples.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-
-        const color = colors[colorIdx % colors.length];
-        const commonConfig = {
-          label: bc.name,
-          borderColor: color,
-          backgroundColor: color + '20',
-          tension: 0.3,
-          borderWidth: 2,
-          pointRadius: 3,
-          fill: false,
-          data: []
-        };
-
-        const concurrentData = { ...commonConfig, data: allSamples.map(s => s.concurrent) };
-        const totalData = { ...commonConfig, data: allSamples.map(s => s.total) };
-
-        datasets.concurrent.push(concurrentData);
-        datasets.total.push(totalData);
-        colorIdx++;
-      }
-
-      if (concurrentChart) concurrentChart.destroy();
-      if (totalChart) totalChart.destroy();
-
-      const maxLength = Math.max(...datasets.concurrent.map(d => d.data.length), 1);
-      const labels = Array.from({ length: maxLength }, (_, i) => i + 1);
-
-      concurrentChart = new Chart(concurrentCtx, {
-        type: 'line',
-        data: { labels, datasets: datasets.concurrent },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { display: true, position: 'bottom' } },
-          scales: {
-            y: { beginAtZero: true }
-          }
-        }
-      });
-
-      totalChart = new Chart(totalCtx, {
-        type: 'line',
-        data: { labels, datasets: datasets.total },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { display: true, position: 'bottom' } },
-          scales: {
-            y: { beginAtZero: true }
-          }
-        }
-      });
-    }
-
-    // データをエクスポート
-    function exportData() {
-      const json = JSON.stringify({ config, statsData }, null, 2);
-      const blob = new Blob([json], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `twitcas-stats-${new Date().toISOString().split('T')[0]}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-    }
-
-    // エラーを表示
-    function showError(message) {
-      const container = document.getElementById('errorContainer');
-      container.innerHTML = `<div class="error">${message}</div>`;
-      setTimeout(() => container.innerHTML = '', 5000);
-    }
-
-    // 初期化
-    (async () => {
-      await loadConfig();
-      await refreshData();
-      setInterval(refreshData, 30000);
-    })();
-  </script>
+loadAll();
+setInterval(loadAll,5000);
+</script>
 </body>
 </html>
