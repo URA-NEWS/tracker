@@ -157,49 +157,99 @@ async function fetchUserInfo(userId) {
 }
 
 // ---------- ツイキャス: 配信状態・視聴数 ----------
-async function fetchBroadcastStats(userId) {
-  try {
-    const res = await fetch(`https://frontendapi.twitcasting.tv/users/${encodeURIComponent(userId)}/latest-movie`, {
-      headers: { 'User-Agent': UA, Accept: 'application/json' }
-    });
-    if (res.ok) {
-      const data = await res.json();
-      const m = data && data.movie;
-      if (m && m.is_on_live) {
-        const concurrent = Number(m.current_view_count ?? m.viewers ?? 0);
-        const total = Number(m.total_view_count ?? m.total_viewers ?? 0);
-        if (!isNaN(concurrent) && !isNaN(total)) {
-          return { concurrent, total, timestamp: new Date().toISOString() };
-        }
-      } else if (m && !m.is_on_live) return null;
-    }
-  } catch (e) { /* fallback */ }
 
+// 1) 配信中か & movie_id を取得（yt-dlp/streamlink と同じ確実な経路）
+async function fetchLiveInfo(userId) {
   try {
-    const res = await fetch(`https://twitcasting.tv/${encodeURIComponent(userId)}`, { headers: { 'User-Agent': UA } });
-    if (!res.ok) return null;
-    const html = await res.text();
-    const liveNow = /data-is-onlive=["']true["']/i.test(html) || /"is_on_live"\s*:\s*true/i.test(html);
-    if (!liveNow) return null;
-
-    let concurrent = null, total = null;
-    const cur = html.match(/"current_view_count"\s*:\s*(\d+)/) || html.match(/data-viewer-count=["'](\d+)["']/);
-    const tot = html.match(/"total_view_count"\s*:\s*(\d+)/) || html.match(/data-total-viewer-count=["'](\d+)["']/);
-    if (cur) concurrent = parseInt(cur[1], 10);
-    if (tot) total = parseInt(tot[1], 10);
-    if (concurrent === null || total === null) {
-      const pair = html.match(/>\s*(\d[\d,]*)\s*\/\s*(\d[\d,]*)\s*</);
-      if (pair) {
-        concurrent = parseInt(pair[1].replace(/,/g, ''), 10);
-        total = parseInt(pair[2].replace(/,/g, ''), 10);
-      }
-    }
-    if (concurrent === null || total === null) return null;
-    return { concurrent, total, timestamp: new Date().toISOString() };
+    const res = await fetch(
+      `https://twitcasting.tv/streamserver.php?target=${encodeURIComponent(userId)}&mode=client&player=pc_web`,
+      { headers: { 'User-Agent': UA, Accept: 'application/json' } }
+    );
+    if (!res.ok) return { live: false, movie_id: null, status: res.status };
+    const j = await res.json();
+    const m = j && j.movie;
+    return { live: !!(m && m.live), movie_id: m && m.id ? String(m.id) : null, status: res.status };
   } catch (e) {
-    console.error(`fetchBroadcastStats (${userId}):`, e.message);
-    return null;
+    return { live: false, movie_id: null, error: e.message };
   }
+}
+
+// 2) 視聴数を取得（複数経路をフォールバック）
+async function fetchViewCounts(userId, movieId) {
+  // 2-a) 公式風JSON（movie_id 指定）
+  if (movieId) {
+    try {
+      const r = await fetch(`https://frontendapi.twitcasting.tv/movies/${movieId}/status/viewer`, {
+        headers: { 'User-Agent': UA, Accept: 'application/json' }
+      });
+      if (r.ok) {
+        const j = await r.json();
+        const c = j?.viewers?.current ?? j?.current_view_count ?? j?.current;
+        const t = j?.viewers?.total ?? j?.total_view_count ?? j?.total;
+        if (c != null && t != null) return { concurrent: Number(c), total: Number(t), src: 'viewerapi' };
+      }
+    } catch (e) { /* next */ }
+  }
+
+  // 2-b) 配信ページHTMLから抽出
+  const pageUrl = movieId
+    ? `https://twitcasting.tv/${encodeURIComponent(userId)}/movie/${movieId}`
+    : `https://twitcasting.tv/${encodeURIComponent(userId)}`;
+  try {
+    const r = await fetch(pageUrl, { headers: { 'User-Agent': UA, 'Accept-Language': 'ja' } });
+    if (r.ok) {
+      const h = await r.text();
+      const got = parseCountsFromHtml(h);
+      if (got) return { ...got, src: 'html' };
+    }
+  } catch (e) { /* next */ }
+
+  // 2-c) プロフィールページHTML
+  if (movieId) {
+    try {
+      const r = await fetch(`https://twitcasting.tv/${encodeURIComponent(userId)}`, {
+        headers: { 'User-Agent': UA, 'Accept-Language': 'ja' }
+      });
+      if (r.ok) {
+        const got = parseCountsFromHtml(await r.text());
+        if (got) return { ...got, src: 'profile-html' };
+      }
+    } catch (e) { /* give up */ }
+  }
+  return null;
+}
+
+function parseCountsFromHtml(h) {
+  let c = null, t = null;
+
+  let m = h.match(/"current_view_count"\s*:\s*"?(\d+)"?/);
+  if (m) c = parseInt(m[1], 10);
+  m = h.match(/"total_view_count"\s*:\s*"?(\d+)"?/);
+  if (m) t = parseInt(m[1], 10);
+  if (c != null && t != null) return { concurrent: c, total: t };
+
+  m = h.match(/data-viewer-count=["'](\d+)["']/);
+  if (m) c = parseInt(m[1], 10);
+  m = h.match(/data-total-viewer-count=["'](\d+)["']/);
+  if (m) t = parseInt(m[1], 10);
+  if (c != null && t != null) return { concurrent: c, total: t };
+
+  // 「856/1251」表記
+  m = h.match(/(\d[\d,]*)\s*<\s*\/\s*span\s*>\s*\/\s*<[^>]*>\s*(\d[\d,]*)/);
+  if (m) return { concurrent: +m[1].replace(/,/g, ''), total: +m[2].replace(/,/g, '') };
+
+  m = h.match(/>\s*(\d[\d,]*)\s*\/\s*(\d[\d,]*)\s*</);
+  if (m) return { concurrent: +m[1].replace(/,/g, ''), total: +m[2].replace(/,/g, '') };
+
+  return null;
+}
+
+async function fetchBroadcastStats(userId) {
+  const info = await fetchLiveInfo(userId);
+  if (!info.live) return null;
+  const v = await fetchViewCounts(userId, info.movie_id);
+  if (!v) return { concurrent: 0, total: 0, timestamp: new Date().toISOString() };
+  return { concurrent: v.concurrent, total: v.total, timestamp: new Date().toISOString() };
 }
 
 // ---------- 監視ループ ----------
@@ -274,25 +324,31 @@ const server = http.createServer((req, res) => {
     (async () => {
       const uid = decodeURIComponent(pathname.replace('/api/debug/', ''));
       const out = { user_id: uid };
-      try {
-        const r = await fetch(`https://frontendapi.twitcasting.tv/users/${encodeURIComponent(uid)}/latest-movie`, {
-          headers: { 'User-Agent': UA, Accept: 'application/json' }
-        });
-        out.frontendapi_status = r.status;
-        const t = await r.text();
-        try { out.frontendapi_body = JSON.parse(t); } catch (e) { out.frontendapi_body = t.slice(0, 800); }
-      } catch (e) { out.frontendapi_error = e.message; }
-      try {
-        const r2 = await fetch(`https://twitcasting.tv/${encodeURIComponent(uid)}`, { headers: { 'User-Agent': UA } });
-        const h = await r2.text();
-        out.html_status = r2.status;
-        out.html_is_onlive_attr = /data-is-onlive=["\']true["\']/i.test(h);
-        out.html_is_on_live_json = /"is_on_live"\s*:\s*true/i.test(h);
-        const cur = h.match(/"current_view_count"\s*:\s*(\d+)/);
-        const tot = h.match(/"total_view_count"\s*:\s*(\d+)/);
-        out.html_current_view_count = cur ? cur[1] : null;
-        out.html_total_view_count = tot ? tot[1] : null;
-      } catch (e) { out.html_error = e.message; }
+      out.liveInfo = await fetchLiveInfo(uid);
+      if (out.liveInfo.movie_id) {
+        try {
+          const r = await fetch(`https://frontendapi.twitcasting.tv/movies/${out.liveInfo.movie_id}/status/viewer`, {
+            headers: { 'User-Agent': UA, Accept: 'application/json' }
+          });
+          out.viewerapi_status = r.status;
+          out.viewerapi_body = (await r.text()).slice(0, 600);
+        } catch (e) { out.viewerapi_error = e.message; }
+
+        try {
+          const r2 = await fetch(`https://twitcasting.tv/${encodeURIComponent(uid)}/movie/${out.liveInfo.movie_id}`, {
+            headers: { 'User-Agent': UA, 'Accept-Language': 'ja' }
+          });
+          const h = await r2.text();
+          out.movie_page_status = r2.status;
+          out.movie_page_len = h.length;
+          out.parsed_from_movie_page = parseCountsFromHtml(h);
+          const hits = [];
+          const re = /.{90}view.{90}/gi;
+          let mm, n = 0;
+          while ((mm = re.exec(h)) && n < 12) { hits.push(mm[0].replace(/\s+/g, ' ')); n++; }
+          out.view_snippets = hits;
+        } catch (e) { out.movie_page_error = e.message; }
+      }
       out.parsed = await fetchBroadcastStats(uid);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(out, null, 2));
