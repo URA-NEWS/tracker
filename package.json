@@ -1,0 +1,18 @@
+{
+  "name": "twitcas-tracker",
+  "version": "1.0.0",
+  "description": "ツイキャス配信者の同時接続数・総来場者数を自動追跡・グラフ化",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "twitcasting",
+    "tracker",
+    "analytics",
+    "livestream"
+  ],
+  "author": "",
+  "license": "MIT"
+}

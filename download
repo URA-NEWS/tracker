@@ -1,0 +1,8 @@
+node_modules/
+config.json
+stats.json
+.env
+.DS_Store
+*.log
+dist/
+build/

@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>📊 ツイキャス配信者追跡</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      --primary: #6366f1;
+      --primary-dark: #4f46e5;
+      --secondary: #8b5cf6;
+      --success: #10b981;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --dark: #1f2937;
+      --light: #f3f4f6;
+      --border: #e5e7eb;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+      color: var(--dark);
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    header {
+      background: white;
+      border-radius: 16px;
+      padding: 30px;
+      margin-bottom: 30px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    }
+
+    header h1 {
+      font-size: 28px;
+      color: var(--primary);
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    header p {
+      color: #6b7280;
+      font-size: 14px;
+    }
+
+    .main-content {
+      display: grid;
+      grid-template-columns: 1fr 2fr;
+      gap: 30px;
+      margin-bottom: 30px;
+    }
+
+    @media (max-width: 1024px) {
+      .main-content {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .sidebar {
+      background: white;
+      border-radius: 16px;
+      padding: 25px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+      height: fit-content;
+    }
+
+    .sidebar h2 {
+      font-size: 18px;
+      color: var(--dark);
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .add-broadcaster-form {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-bottom: 25px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .form-group label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #6b7280;
+      text-transform: uppercase;
+    }
+
+    .form-group input {
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 14px;
+      transition: all 0.3s;
+    }
+
+    .form-group input:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+    }
+
+    .form-hint {
+      font-size: 11px;
+      color: #9ca3af;
+      margin-top: -4px;
+    }
+
+    .btn {
+      padding: 10px 16px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: var(--primary-dark);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 16px rgba(99, 102, 241, 0.3);
+    }
+
+    .btn-danger {
+      background: #fee2e2;
+      color: var(--danger);
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+
+    .btn-danger:hover {
+      background: #fecaca;
+    }
+
+    .broadcaster-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .broadcaster-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px;
+      background: var(--light);
+      border-radius: 12px;
+      border-left: 3px solid var(--primary);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .broadcaster-item.live {
+      border-left-color: var(--success);
+      background: #f0fdf4;
+    }
+
+    .broadcaster-item img {
+      width: 40px;
+      height: 40px;
+      border-radius: 8px;
+      background: var(--border);
+      object-fit: cover;
+    }
+
+    .broadcaster-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .broadcaster-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--dark);
+      word-break: break-word;
+    }
+
+    .broadcaster-status {
+      font-size: 11px;
+      color: #9ca3af;
+      margin-top: 2px;
+    }
+
+    .live-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      background: var(--success);
+      color: white;
+      border-radius: 6px;
+      font-size: 10px;
+      font-weight: 600;
+      position: absolute;
+      top: 8px;
+      right: 8px;
+    }
+
+    .charts-section {
+      background: white;
+      border-radius: 16px;
+      padding: 25px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    }
+
+    .chart-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 30px;
+      margin-bottom: 30px;
+    }
+
+    @media (max-width: 768px) {
+      .chart-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .chart-wrapper {
+      background: var(--light);
+      padding: 20px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+    }
+
+    .chart-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--dark);
+      margin-bottom: 15px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    canvas {
+      max-height: 350px;
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 25px;
+      flex-wrap: wrap;
+      justify-content: center;
+      padding: 15px 0;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .loading {
+      text-align: center;
+      padding: 40px 20px;
+      color: #9ca3af;
+      font-size: 14px;
+    }
+
+    .error {
+      background: #fee2e2;
+      color: var(--danger);
+      padding: 15px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      border-left: 4px solid var(--danger);
+      font-size: 14px;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+    }
+
+    .empty-state-icon {
+      font-size: 48px;
+      margin-bottom: 10px;
+    }
+
+    .empty-state-text {
+      color: #6b7280;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>📊 ツイキャス配信者追跡ツール</h1>
+      <p>複数の配信者の同時接続数・総来場者数をリアルタイムで監視・グラフ化</p>
+    </header>
+
+    <div class="main-content">
+      <!-- サイドバー -->
+      <div class="sidebar">
+        <h2>➕ 配信者を追加</h2>
+        
+        <div class="add-broadcaster-form">
+          <div class="form-group">
+            <label>ツイキャス URL または user_id</label>
+            <input 
+              type="text" 
+              id="broadcasterInput" 
+              placeholder="例: https://twitcasting.tv/love1001only"
+            >
+            <div class="form-hint">URL を貼り付けるか、user_id を入力してください</div>
+          </div>
+          <button class="btn btn-primary" onclick="addBroadcaster()">
+            🔗 追加する
+          </button>
+        </div>
+
+        <h2 style="margin-top: 30px;">📺 追跡中の配信者</h2>
+        <div id="broadcasterList" class="broadcaster-list">
+          <div class="loading">読み込み中...</div>
+        </div>
+      </div>
+
+      <!-- メインコンテンツ -->
+      <div class="charts-section">
+        <div class="controls">
+          <button class="btn btn-primary" onclick="refreshData()">🔄 更新</button>
+          <button class="btn btn-primary" onclick="exportData()">📥 データ出力</button>
+        </div>
+
+        <div id="errorContainer"></div>
+
+        <div class="chart-grid">
+          <div class="chart-wrapper">
+            <div class="chart-title">📈 同時接続数の推移</div>
+            <canvas id="concurrentChart"></canvas>
+          </div>
+
+          <div class="chart-wrapper">
+            <div class="chart-title">👥 総来場者数の推移</div>
+            <canvas id="totalChart"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_URL = window.location.origin + '/api';
+    let config = {};
+    let statsData = {};
+    let concurrentChart = null;
+    let totalChart = null;
+
+    // URL から user_id を抽出
+    function extractUserId(input) {
+      // URL の場合
+      const urlMatch = input.match(/twitcasting\.tv\/(.+)/);
+      if (urlMatch) {
+        return urlMatch[1].split('?')[0].trim();
+      }
+      // user_id の場合
+      return input.trim();
+    }
+
+    // 配信者を追加
+    async function addBroadcaster() {
+      const input = document.getElementById('broadcasterInput').value.trim();
+      if (!input) {
+        showError('URL または user_id を入力してください');
+        return;
+      }
+
+      const userId = extractUserId(input);
+      try {
+        const response = await fetch(`${API_URL}/config/broadcasters`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: userId })
+        });
+
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.error || 'エラーが発生しました');
+        }
+
+        document.getElementById('broadcasterInput').value = '';
+        await loadConfig();
+        renderBroadcasterList();
+      } catch (error) {
+        showError(`配信者追加エラー: ${error.message}`);
+      }
+    }
+
+    // 配信者を削除
+    async function removeBroadcaster(userId) {
+      if (!confirm('この配信者を削除しますか？')) return;
+
+      try {
+        await fetch(`${API_URL}/config/broadcasters/${encodeURIComponent(userId)}`, {
+          method: 'DELETE'
+        });
+        await loadConfig();
+        await refreshData();
+        renderBroadcasterList();
+      } catch (error) {
+        showError(`削除エラー: ${error.message}`);
+      }
+    }
+
+    // 設定を読み込む
+    async function loadConfig() {
+      try {
+        const response = await fetch(`${API_URL}/config`);
+        config = await response.json();
+      } catch (error) {
+        console.error('設定読み込みエラー:', error);
+      }
+    }
+
+    // データを更新
+    async function refreshData() {
+      try {
+        const response = await fetch(`${API_URL}/twitcas/stats`);
+        statsData = await response.json();
+        renderBroadcasterList();
+        updateCharts();
+      } catch (error) {
+        showError(`データ取得エラー: ${error.message}`);
+      }
+    }
+
+    // 配信者リストを描画
+    function renderBroadcasterList() {
+      const list = document.getElementById('broadcasterList');
+      
+      if (!config.broadcasters || config.broadcasters.length === 0) {
+        list.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">📭</div>
+            <div class="empty-state-text">配信者を追加してください</div>
+          </div>
+        `;
+        return;
+      }
+
+      list.innerHTML = config.broadcasters.map(bc => {
+        const stats = statsData[bc.user_id];
+        const isLive = stats?.current_broadcast !== null;
+        const statusText = isLive ? '配信中' : 'オフライン';
+
+        let currentStats = '---';
+        if (isLive && stats.current_broadcast.samples.length > 0) {
+          const latest = stats.current_broadcast.samples[stats.current_broadcast.samples.length - 1];
+          currentStats = `${latest.concurrent} / ${latest.total}`;
+        }
+
+        return `
+          <div class="broadcaster-item ${isLive ? 'live' : ''}">
+            <img 
+              src="${bc.image || 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2240%22 height=%2240%22%3E%3Crect fill=%22%23e5e7eb%22 width=%2240%22 height=%2240%22/%3E%3C/svg%3E'}" 
+              alt="${bc.name}"
+              onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2240%22 height=%2240%22%3E%3Crect fill=%22%23e5e7eb%22 width=%2240%22 height=%2240%22/%3E%3C/svg%3E'"
+            >
+            <div class="broadcaster-info">
+              <div class="broadcaster-name">${bc.name}</div>
+              <div class="broadcaster-status">${currentStats}</div>
+            </div>
+            ${isLive ? '<div class="live-badge">🔴 配信中</div>' : ''}
+            <button class="btn btn-danger" onclick="removeBroadcaster('${bc.user_id}')">✕</button>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // グラフを更新
+    function updateCharts() {
+      const concurrentCtx = document.getElementById('concurrentChart').getContext('2d');
+      const totalCtx = document.getElementById('totalChart').getContext('2d');
+
+      const colors = ['#6366f1', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444'];
+      const datasets = { concurrent: [], total: [] };
+      let colorIdx = 0;
+
+      for (const bc of (config.broadcasters || [])) {
+        const stats = statsData[bc.user_id];
+        if (!stats || !stats.history.length && !stats.current_broadcast) continue;
+
+        const allSamples = [];
+        (stats.history || []).forEach(broadcast => {
+          (broadcast.samples || []).forEach(sample => {
+            allSamples.push(sample);
+          });
+        });
+
+        if (stats.current_broadcast?.samples) {
+          allSamples.push(...stats.current_broadcast.samples);
+        }
+
+        if (allSamples.length === 0) {
+          colorIdx++;
+          continue;
+        }
+
+        allSamples.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+        const color = colors[colorIdx % colors.length];
+        const commonConfig = {
+          label: bc.name,
+          borderColor: color,
+          backgroundColor: color + '20',
+          tension: 0.3,
+          borderWidth: 2,
+          pointRadius: 3,
+          fill: false,
+          data: []
+        };
+
+        const concurrentData = { ...commonConfig, data: allSamples.map(s => s.concurrent) };
+        const totalData = { ...commonConfig, data: allSamples.map(s => s.total) };
+
+        datasets.concurrent.push(concurrentData);
+        datasets.total.push(totalData);
+        colorIdx++;
+      }
+
+      if (concurrentChart) concurrentChart.destroy();
+      if (totalChart) totalChart.destroy();
+
+      const maxLength = Math.max(...datasets.concurrent.map(d => d.data.length), 1);
+      const labels = Array.from({ length: maxLength }, (_, i) => i + 1);
+
+      concurrentChart = new Chart(concurrentCtx, {
+        type: 'line',
+        data: { labels, datasets: datasets.concurrent },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: true, position: 'bottom' } },
+          scales: {
+            y: { beginAtZero: true }
+          }
+        }
+      });
+
+      totalChart = new Chart(totalCtx, {
+        type: 'line',
+        data: { labels, datasets: datasets.total },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: true, position: 'bottom' } },
+          scales: {
+            y: { beginAtZero: true }
+          }
+        }
+      });
+    }
+
+    // データをエクスポート
+    function exportData() {
+      const json = JSON.stringify({ config, statsData }, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `twitcas-stats-${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // エラーを表示
+    function showError(message) {
+      const container = document.getElementById('errorContainer');
+      container.innerHTML = `<div class="error">${message}</div>`;
+      setTimeout(() => container.innerHTML = '', 5000);
+    }
+
+    // 初期化
+    (async () => {
+      await loadConfig();
+      await refreshData();
+      setInterval(refreshData, 30000);
+    })();
+  </script>
+</body>
+</html>
