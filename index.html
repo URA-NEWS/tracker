@@ -20,7 +20,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
 .hd .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 12px var(--ok);animation:pl 2s infinite}
 @keyframes pl{0%,100%{opacity:1}50%{opacity:.3}}
 .hd .meta{margin-left:auto;display:flex;align-items:center;gap:9px;font-size:12px;color:var(--sub);flex-wrap:wrap}
-.chip{background:var(--panel);border:1px solid var(--line);padding:6px 12px;border-radius:999px;font-size:12px;color:var(--sub)}
+.chip{background:var(--panel);border:1px solid var(--line);padding:8px 14px;border-radius:999px;font-size:13px;font-weight:600;color:var(--txt)}
 .btn{background:var(--accent);color:#fff;border:0;padding:10px 18px;border-radius:11px;
   font-size:13px;font-weight:700;cursor:pointer;transition:.18s;white-space:nowrap}
 .btn:hover{filter:brightness(1.12)}
@@ -33,27 +33,27 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
 .hero{background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:26px 26px 22px;margin-bottom:16px}
 .heroTop{display:flex;align-items:flex-end;gap:24px;flex-wrap:wrap;margin-bottom:20px}
 .bigv{font-size:52px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
-.bigl{font-size:11px;color:var(--sub);letter-spacing:.1em;font-weight:700;margin-bottom:10px}
+.bigl{font-size:13px;color:var(--sub);letter-spacing:.06em;font-weight:700;margin-bottom:10px}
 .deltas{display:flex;gap:10px;flex-wrap:wrap;margin-left:auto}
-.dl{background:var(--panel2);border-radius:12px;padding:10px 14px;min-width:112px}
-.dl .l{font-size:9.5px;color:var(--sub);letter-spacing:.05em;margin-bottom:5px}
-.dl .v{font-size:17px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+.dl{background:var(--panel2);border-radius:12px;padding:12px 16px;min-width:128px}
+  .dl .l{font-size:11.5px;color:var(--sub);letter-spacing:.05em;margin-bottom:5px}
+.dl .v{font-size:19px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
 .up{color:var(--ok)}.down{color:var(--live)}.flat{color:var(--sub)}
 .seg{display:inline-flex;background:var(--panel2);border:1px solid var(--line);border-radius:10px;overflow:hidden}
-.seg button{background:transparent;border:0;color:var(--sub);padding:7px 15px;font-size:12px;font-weight:700;cursor:pointer}
+.seg button{background:transparent;border:0;color:var(--sub);padding:9px 17px;font-size:13.5px;font-weight:700;cursor:pointer}
 .seg button.on{background:var(--accent);color:#fff}
 .ctrl{display:flex;gap:9px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
 #overall{height:440px!important}
-.note{font-size:11.5px;color:#5f6a83;margin-top:12px}
+.note{font-size:12.5px;line-height:1.7;color:#78829b;margin-top:14px}
 
 .stats3{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:34px}
 .st{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:15px 17px}
-.st .l{font-size:10px;color:var(--sub);letter-spacing:.05em;margin-bottom:7px}
-.st .v{font-size:23px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+.st .l{font-size:12px;color:var(--sub);letter-spacing:.05em;margin-bottom:7px}
+.st .v{font-size:26px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
 
-.sect{font-size:12px;font-weight:800;color:var(--sub);letter-spacing:.1em;margin:0 0 12px;
+.sect{font-size:14px;font-weight:800;color:var(--sub);letter-spacing:.1em;margin:0 0 12px;
   display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.sect .sub{font-weight:500;letter-spacing:0;color:#5f6a83}
+.sect .sub{font-weight:500;letter-spacing:0;color:#8b95ad;font-size:12.5px}
 .sect .sp{margin-left:auto}
 
 .addbar{display:flex;gap:9px;margin-bottom:14px;flex-wrap:wrap}
@@ -64,25 +64,25 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
 
 /* ===== 個別リスト（表のみ） ===== */
 .tbl{background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden}
-.thd,.trow{display:grid;grid-template-columns:30px 38px minmax(140px,1.8fr) 92px 92px 92px 84px 60px;
-  gap:10px;align-items:center;padding:10px 14px}
-.thd{background:var(--panel2);font-size:10px;color:var(--sub);letter-spacing:.06em;font-weight:800}
+.thd,.trow{display:grid;grid-template-columns:34px 42px minmax(150px,1.8fr) 104px 104px 104px 96px 66px;
+  gap:12px;align-items:center;padding:13px 16px}
+.thd{background:var(--panel2);font-size:12px;color:var(--sub);letter-spacing:.06em;font-weight:800}
 .trow{border-top:1px solid var(--line);cursor:pointer;transition:.14s}
 .trow:hover{background:#1a2132}
 .trow.dormant{opacity:.42}
-.rk{font-size:12px;color:#5f6a83;font-weight:700;text-align:center}
-.trow img{width:32px;height:32px;border-radius:9px;object-fit:cover;background:var(--panel2)}
-.nm{font-size:13px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.u2{font-size:10px;color:#5f6a83;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+.rk{font-size:13px;color:#5f6a83;font-weight:700;text-align:center}
+.trow img{width:36px;height:36px;border-radius:9px;object-fit:cover;background:var(--panel2)}
+.nm{font-size:14.5px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.u2{font-size:11.5px;color:#5f6a83;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   display:flex;gap:5px;align-items:center}
-.tag{font-size:8.5px;font-weight:700;padding:1px 5px;border-radius:4px;background:var(--panel2);
+.tag{font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;background:var(--panel2);
   color:var(--sub);border:1px solid var(--line);flex:0 0 auto}
 .tag.pin{background:rgba(91,140,255,.18);color:var(--accent);border-color:transparent}
 .tag.dor{background:rgba(255,179,64,.16);color:var(--warn);border-color:transparent}
 .tag.live{background:var(--live);color:#fff;border-color:transparent}
-.v2{font-size:14.5px;font-weight:800;font-variant-numeric:tabular-nums;text-align:right}
-.v2 small{display:block;font-size:9px;color:#5f6a83;font-weight:600;margin-top:2px}
-.pct{font-size:13px;font-weight:800;text-align:right;font-variant-numeric:tabular-nums}
+.v2{font-size:17px;font-weight:800;font-variant-numeric:tabular-nums;text-align:right}
+.v2 small{display:block;font-size:10.5px;color:#5f6a83;font-weight:600;margin-top:2px}
+.pct{font-size:15px;font-weight:800;text-align:right;font-variant-numeric:tabular-nums}
 .acts2{display:flex;gap:4px;justify-content:flex-end}
 .iconbtn{background:var(--panel2);border:1px solid var(--line);color:var(--sub);
   width:24px;height:24px;border-radius:7px;font-size:11px;cursor:pointer;line-height:1;
@@ -110,16 +110,16 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
   width:34px;height:34px;border-radius:10px;cursor:pointer;font-size:15px;flex:0 0 34px}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:10px;margin-bottom:20px}
 .kpi{background:var(--panel2);border-radius:12px;padding:12px 13px}
-.kpi .l{font-size:9.5px;color:var(--sub);letter-spacing:.05em;margin-bottom:6px}
-.kpi .v{font-size:20px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+.kpi .l{font-size:11.5px;color:var(--sub);letter-spacing:.05em;margin-bottom:6px}
+.kpi .v{font-size:23px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
 .cbox{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:16px}
-.cbox h3{font-size:12.5px;font-weight:700;margin-bottom:4px}
+.cbox h3{font-size:14px;font-weight:700;margin-bottom:8px}
 .cbox canvas{height:340px!important}
-.hrow{display:flex;align-items:center;gap:12px;padding:10px 13px;background:var(--panel2);
-  border-radius:11px;margin-bottom:6px;font-size:12.5px}
-.hrow .d{color:var(--sub);font-size:11.5px;min-width:132px}
+.hrow{display:flex;align-items:center;gap:14px;padding:12px 15px;background:var(--panel2);
+  border-radius:11px;margin-bottom:7px;font-size:14px}
+.hrow .d{color:var(--sub);font-size:13px;min-width:148px}
 .hrow .s{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:700}
-.trend{font-size:11.5px;font-weight:800;padding:3px 8px;border-radius:6px}
+.trend{font-size:13px;font-weight:800;padding:3px 8px;border-radius:6px}
 .trend.up{background:rgba(46,230,168,.15)}
 .trend.down{background:rgba(255,59,92,.15)}
 .trend.flat{background:var(--panel);color:var(--sub)}
@@ -147,7 +147,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
   <div class="hero">
     <div class="heroTop">
       <div>
-        <div class="bigl">全体平均同接（最新日）</div>
+        <div class="bigl">全体 最高同接の平均（最新日）</div>
         <div class="bigv" id="heroVal">—</div>
       </div>
       <div>
@@ -171,7 +171,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
   <div class="stats3" id="stats3"></div>
 
   <div class="sect">個別の配信者
-    <span class="sub">クリックでその人の日別平均</span>
+    <span class="sub">数値は最高同接ベース／クリックで詳細</span>
     <span class="sp"></span>
     <div class="seg" id="listSort">
       <button data-k="pct" class="on">上昇率順</button>
@@ -249,13 +249,17 @@ function lineStyle(color,{fill=true,dash=null}={}){
     pointRadius:4.5,pointHoverRadius:8,pointBackgroundColor:'#0b0e14',pointBorderColor:color,
     pointBorderWidth:2.2,pointHoverBorderWidth:3,pointHitRadius:16};}
 const AXIS={x:{grid:{display:false},border:{display:false},
-    ticks:{color:'#7c869e',font:{size:10.5},padding:8,maxRotation:0,autoSkipPadding:22}},
-  y:{beginAtZero:true,grid:{color:'rgba(255,255,255,.055)',drawTicks:false},border:{display:false},
-    ticks:{color:'#7c869e',font:{size:10.5},padding:10,maxTicksLimit:6}}};
-const TIP={backgroundColor:'rgba(13,17,26,.97)',borderColor:'rgba(255,255,255,.10)',borderWidth:1,
-  titleColor:'#e6ebf5',bodyColor:'#c3ccdd',padding:12,cornerRadius:10,
-  boxWidth:8,boxHeight:8,usePointStyle:true,titleFont:{size:11.5,weight:'700'},bodyFont:{size:12},
-  displayColors:false};
+    ticks:{color:'#98a3ba',font:{size:13,weight:'600'},padding:10,maxRotation:0,autoSkipPadding:26}},
+  y:{beginAtZero:true,grid:{color:'rgba(255,255,255,.07)',drawTicks:false},border:{display:false},
+    ticks:{color:'#98a3ba',font:{size:13,weight:'600'},padding:12,maxTicksLimit:6}}};
+const LEGEND={display:true,position:'top',align:'end',
+  labels:{color:'#c3ccdd',boxWidth:11,boxHeight:11,usePointStyle:true,pointStyle:'circle',
+    font:{size:14,weight:'700'},padding:20}};
+const TIP={backgroundColor:'rgba(13,17,26,.98)',borderColor:'rgba(255,255,255,.14)',borderWidth:1,
+  titleColor:'#ffffff',bodyColor:'#dbe3f0',padding:16,cornerRadius:12,caretSize:7,
+  boxWidth:10,boxHeight:10,usePointStyle:true,
+  titleFont:{size:15,weight:'800'},bodyFont:{size:14,weight:'600',family:'monospace'},
+  bodySpacing:7,titleMarginBottom:10,displayColors:false};
 const NOANIM={animation:false,animations:{colors:false,x:false,y:false},
   transitions:{active:{animation:{duration:160}}}};
 
@@ -292,7 +296,8 @@ function broadcastsOf(st){if(!st)return[];
     if(b.source==='archive'&&(b.peak||b.total_final))return{t:new Date(b.started_at).getTime(),
       started_at:b.started_at,live:false,archive:true,avg:null,peak:b.peak||0,total:b.total_final||0};
     return null;}).filter(Boolean).sort((a,b)=>a.t-b.t);}
-const valOf=x=>x.avg!=null?x.avg:x.peak;
+const valOf=x=>x.peak;              // 全期間で一貫して比較できるのは最高同接
+const realAvgOf=x=>x.avg;           // 実測の平均同接（監視開始以降のみ）
 
 // 個別: 日別平均
 function dailyOf(bs){
@@ -361,36 +366,41 @@ function renderOverall(){
   let rows=[...overall];
   if(range>0)rows=rows.slice(-range);
 
-  const avgs=rows.map(r=>Number(r.overall_avg||0));
+  const peaks=rows.map(r=>r.overall_peak_avg==null?null:Number(r.overall_peak_avg));
+  const avgs=rows.map(r=>r.overall_avg==null?null:Number(r.overall_avg));
   const tots=rows.map(r=>Number(r.overall_total_viewers||0));
-  document.getElementById('heroVal').textContent=fmt(avgs.length?avgs[avgs.length-1]:null);
+  const hasReal=avgs.some(v=>v!=null);
+  document.getElementById('heroVal').textContent=fmt(peaks.length?peaks[peaks.length-1]:null);
   document.getElementById('heroVal2').textContent=fmt(tots.length?tots[tots.length-1]:null);
 
   const cmp=(days,label)=>{
-    const all=overall.map(r=>Number(r.overall_avg||0));
+    const all=overall.map(r=>Number(r.overall_peak_avg||0));
     if(all.length<2)return`<div class="dl"><div class="l">${label}</div><div class="v flat">—</div></div>`;
     const recent=mean(all.slice(-days)),prev=mean(all.slice(-days*2,-days));
     if(prev==null||!prev)return`<div class="dl"><div class="l">${label}</div><div class="v flat">—</div></div>`;
     const p=Math.round((recent-prev)/prev*100);
     const cls=p>0?'up':p<0?'down':'flat';
-    return`<div class="dl"><div class="l">平均同接 ${label}</div>
+    return`<div class="dl"><div class="l">最高同接平均 ${label}</div>
       <div class="v ${cls}">${p>0?'▲ +':p<0?'▼ ':'± '}${Math.abs(p)}%</div></div>`;
   };
   document.getElementById('deltas').innerHTML=cmp(1,'前日')+cmp(7,'先週')+cmp(30,'先月');
 
   document.getElementById('note').textContent=rows.length
-    ? `${rows[0].day} 〜 ${rows[rows.length-1].day}／${rows.length}日分・のべ${rows.reduce((t,r)=>t+Number(r.broadcasts||0),0).toLocaleString('ja-JP')}配信を集計`
+    ? `${rows[0].day} 〜 ${rows[rows.length-1].day}／${rows.length}日分・のべ${rows.reduce((t,r)=>t+Number(r.broadcasts||0),0).toLocaleString('ja-JP')}配信を集計　※ツイキャスAPIは過去配信の「最高同接」しか返さないため、長期の推移は最高同接の平均で比較しています。実測の平均同接（オレンジ点線）は本ツールで監視を開始した日以降のみ。`
     : 'まだ集計できるデータがありません。「過去取込」を押すと一気に貯まります。';
 
   const win=winFor(rows.length);
-  const avgMA=movingAvg(avgs,win), totMA=movingAvg(tots,win);
+  const peakMA=movingAvg(peaks,win), avgMA=movingAvg(avgs,win), totMA=movingAvg(tots,win);
   const many=rows.length>45;
 
   if(oChart)oChart.destroy();
   oChart=new Chart(document.getElementById('overall'),{type:'line',
     data:{labels:rows.map(r=>r.day),datasets:[
-      {label:`平均同接（${win}日移動平均）`,data:avgMA,...lineStyle('#5b8cff'),
+      {label:`最高同接の平均（${win}日移動平均）`,data:peakMA,...lineStyle('#5b8cff'),
        borderWidth:3,pointRadius:many?0:4,pointHoverRadius:7,yAxisID:'y',order:1},
+      ...(hasReal?[{label:'実測の平均同接（日次）',data:avgs,
+        ...lineStyle('#ffb340',{fill:false}),borderWidth:2.4,borderDash:[5,4],
+        pointRadius:many?0:4,pointHoverRadius:7,spanGaps:false,yAxisID:'y',order:3}]:[]),
       {label:`総来場者（${win}日移動平均）`,data:totMA,...lineStyle('#2ee6a8'),
        backgroundColor:gradFill('#2ee6a8',false),
        borderWidth:2.6,pointRadius:many?0:4,pointHoverRadius:7,yAxisID:'y1',order:2}
@@ -398,17 +408,19 @@ function renderOverall(){
     options:{responsive:true,maintainAspectRatio:false,...NOANIM,
       layout:{padding:{top:8,right:12,left:2,bottom:2}},
       interaction:{mode:'index',intersect:false},
-      plugins:{legend:{display:true,position:'top',align:'end',
-          labels:{color:'#8b95ad',boxWidth:8,boxHeight:8,usePointStyle:true,pointStyle:'circle',
-            font:{size:11},padding:14}},
+      plugins:{legend:LEGEND,
         tooltip:{...TIP,callbacks:{
           title:it=>dayJp(rows[it[0].dataIndex].day),
-          label:it=>{if(it.datasetIndex)return null;const i=it.dataIndex,r=rows[i];return[
-            ` 平均同接（日）  ${fmt(r.overall_avg)}`,
-            ` 平均同接（${win}日）${fmt(avgMA[i])}`,
-            ` 総来場者（日）  ${fmt(r.overall_total_viewers)}`,
-            ` 配信者数        ${fmt(r.broadcasters)}`,
-            ` その日の最高    ${fmt(r.day_max_peak)}`];}}}},
+          label:it=>{if(it.datasetIndex)return null;const i=it.dataIndex,r=rows[i];
+            const out=[
+              ` 最高同接の平均（日） ${fmt(r.overall_peak_avg)}`,
+              ` 最高同接の平均（${win}日） ${fmt(peakMA[i])}`];
+            if(r.overall_avg!=null) out.push(` 実測の平均同接      ${fmt(r.overall_avg)}（${r.measured_broadcasts}配信）`);
+            out.push(
+              ` 総来場者            ${fmt(r.overall_total_viewers)}`,
+              ` 配信数 / 配信者数   ${fmt(r.broadcasts)} / ${fmt(r.broadcasters)}`,
+              ` その日の最高        ${fmt(r.day_max_peak)}`);
+            return out;}}}},
       scales:{
         x:{...AXIS.x,ticks:{...AXIS.x.ticks,callback:function(v){
             const d=this.getLabelForValue(v);if(!d)return'';
@@ -426,13 +438,13 @@ function renderStats(){
   const liveNow=config.broadcasters.filter(b=>isLive(stats[b.user_id]));
   const curSum=liveNow.reduce((t,b)=>t+((latest(stats[b.user_id])||{}).concurrent||0),0);
   const curAvg=liveNow.length?Math.round(curSum/liveNow.length):null;
-  const allDays=overall.map(r=>Number(r.overall_avg||0));
+  const allDays=overall.map(r=>Number(r.overall_peak_avg||0)).filter(v=>v>0);
   document.getElementById('stats3').innerHTML=`
     <div class="st"><div class="l">いま配信中の平均同接</div><div class="v" style="color:var(--live)">${fmt(curAvg)}</div></div>
     <div class="st"><div class="l">いま配信中の合計同接</div><div class="v">${fmt(curSum)}</div></div>
     <div class="st"><div class="l">最新日の配信者数</div><div class="v">${fmt(last&&last.broadcasters)}</div></div>
     <div class="st"><div class="l">最新日の総来場者</div><div class="v">${fmt(last&&last.overall_total_viewers)}</div></div>
-    <div class="st"><div class="l">全期間の平均</div><div class="v">${fmt(mean(allDays))}</div></div>
+    <div class="st"><div class="l">全期間の最高同接平均</div><div class="v">${fmt(mean(allDays))}</div></div>
     <div class="st"><div class="l">集計日数</div><div class="v">${overall.length}</div></div>`;
 }
 
@@ -463,9 +475,9 @@ function renderTable(){
   });
 
   const hd=`<div class="thd"><span></span><span></span><span>配信者</span>
-    <span style="text-align:right">直近平均</span>
+    <span style="text-align:right">直近平均<br><span style="font-weight:400">最高同接</span></span>
     <span style="text-align:right" class="hidesm">比較元</span>
-    <span style="text-align:right" class="hidesm">通算平均</span>
+    <span style="text-align:right" class="hidesm">通算平均<br><span style="font-weight:400">最高同接</span></span>
     <span style="text-align:right">増減</span><span></span></div>`;
 
   const body=rows.length?rows.map((r,i)=>{
@@ -519,13 +531,13 @@ function renderModal(uid){
     </div>
     <div class="kpis">
       <div class="kpi"><div class="l">現在の同接</div><div class="v">${live?fmt(l&&l.concurrent):'—'}</div></div>
-      <div class="kpi"><div class="l">直近平均</div><div class="v">${fmt(tr?tr.recent:(bs.length?valOf(bs[bs.length-1]):null))}</div></div>
-      <div class="kpi"><div class="l">通算平均</div><div class="v">${fmt(bs.length?mean(bs.map(valOf)):null)}</div></div>
+      <div class="kpi"><div class="l">直近の最高同接平均</div><div class="v">${fmt(tr?tr.recent:(bs.length?valOf(bs[bs.length-1]):null))}</div></div>
+      <div class="kpi"><div class="l">通算の最高同接平均</div><div class="v">${fmt(bs.length?mean(bs.map(valOf)):null)}</div></div>
       <div class="kpi"><div class="l">最高同接</div><div class="v">${fmt(peak)}</div></div>
       <div class="kpi"><div class="l">トレンド</div><div class="v ${tr?(tr.pct>0?'up':tr.pct<0?'down':'flat'):'flat'}">${tr?(tr.pct>0?'+':'')+tr.pct+'%':'—'}</div></div>
       <div class="kpi"><div class="l">記録配信数</div><div class="v">${bs.filter(x=>!x.live).length}</div></div>
     </div>
-    <div class="cbox"><h3>日ごとの平均同接</h3><canvas id="dc"></canvas></div>
+    <div class="cbox"><h3>日ごとの最高同接<span style="color:var(--sub);font-weight:400;font-size:11px">（過去配信は最高同接しか取得できないため）</span></h3><canvas id="dc"></canvas></div>
     <div class="sect" style="margin-top:24px">配信ごとの記録</div>
     ${bs.length?[...bs].reverse().slice(0,60).map((x,i,arr)=>{
       const prev=arr[i+1],v=valOf(x);
@@ -551,9 +563,7 @@ function renderModal(uid){
       options:{responsive:true,maintainAspectRatio:false,...NOANIM,
         layout:{padding:{top:8,right:10,left:2,bottom:2}},
         interaction:{mode:'index',intersect:false},
-        plugins:{legend:{display:true,position:'top',align:'end',
-            labels:{color:'#8b95ad',boxWidth:8,boxHeight:8,usePointStyle:true,pointStyle:'circle',
-              font:{size:10.5},padding:12}},
+        plugins:{legend:LEGEND,
           tooltip:{...TIP,callbacks:{
             title:it=>dayJp(daily[it[0].dataIndex].day),
             label:it=>{if(it.datasetIndex)return null;const i=it.dataIndex,d=daily[i];
