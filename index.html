@@ -122,6 +122,13 @@ body::before{
   border-radius:12px;margin-bottom:8px;font-size:13px}
 .hrow .d{color:var(--sub);font-size:12px;min-width:130px}
 .hrow .s{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:700}
+.hm{display:grid;grid-template-columns:34px repeat(24,1fr);gap:2px;margin-top:6px}
+.hm .hl{font-size:9px;color:var(--sub);display:flex;align-items:center;justify-content:flex-end;padding-right:4px}
+.hm .hh{font-size:9px;color:var(--sub);text-align:center}
+.hm .cell{aspect-ratio:1;border-radius:3px;background:#161c2b;position:relative}
+.hm .cell[data-v]:hover{outline:1px solid var(--accent)}
+.hmleg{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--sub);margin-top:8px}
+.hmleg i{width:14px;height:10px;border-radius:2px;display:inline-block}
 .trend{font-size:12px;font-weight:700;padding:3px 8px;border-radius:6px}
 .up{background:rgba(46,230,168,.15);color:var(--ok)}
 .down{background:rgba(255,59,92,.15);color:var(--live)}
@@ -137,6 +144,7 @@ body::before{
     <div class="meta">
       <span class="chip" id="liveCount">-</span>
       <span id="lastUpdate">—</span>
+      <button class="btn ghost" onclick="cleanupZeros()">0データ削除</button>
       <button class="btn ghost" onclick="exportData()">エクスポート</button>
     </div>
   </div>
@@ -150,10 +158,10 @@ body::before{
 
   <div class="grid" id="grid"></div>
 
-  <div class="sect">全体比較</div>
+  <div class="sect">配信ごとの推移（全配信者）</div>
   <div class="chartrow">
-    <div class="cbox"><h3>同時接続数</h3><canvas id="c1"></canvas></div>
-    <div class="cbox"><h3>総来場者数</h3><canvas id="c2"></canvas></div>
+    <div class="cbox"><h3>配信ごとの平均同接</h3><canvas id="c1"></canvas></div>
+    <div class="cbox"><h3>配信ごとの総来場者</h3><canvas id="c2"></canvas></div>
   </div>
 </div>
 
@@ -165,8 +173,45 @@ body::before{
 const API = location.origin + '/api';
 let config = { broadcasters: [] };
 let stats = {};
-let c1, c2, sparks = {}, dChart = null, openUid = null;
+let c1, c2, sparks = {}, dChart = null, liveChart = null, openUid = null;
 const COLORS = ['#5b8cff','#ff3b5c','#2ee6a8','#ffb340','#c17bff','#38d9f0','#ff7ab8','#9ee65a'];
+
+// ===== 現在地パルス =====
+let pulsePhase = 0;
+function withAlpha(hex, a){
+  const h = String(hex).replace('#','');
+  const r=parseInt(h.slice(0,2),16), g=parseInt(h.slice(2,4),16), b=parseInt(h.slice(4,6),16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+Chart.register({
+  id:'livePulse',
+  afterDatasetsDraw(chart){
+    const idxs = chart.$pulse;
+    if(!idxs || !idxs.length) return;
+    const t=(Math.sin(pulsePhase)+1)/2;
+    idxs.forEach(i=>{
+      const ds=chart.data.datasets[i]; if(!ds||!ds.data.length) return;
+      const meta=chart.getDatasetMeta(i); const pt=meta.data[meta.data.length-1]; if(!pt) return;
+      const col=ds.borderColor||'#ff3b5c', ctx=chart.ctx;
+      const rad=(chart.$pulseSmall?2.5:4)+t*(chart.$pulseSmall?4:9);
+      ctx.save();
+      ctx.beginPath(); ctx.arc(pt.x,pt.y,rad,0,Math.PI*2);
+      ctx.fillStyle=withAlpha(col,0.28*(1-t)); ctx.fill();
+      ctx.beginPath(); ctx.arc(pt.x,pt.y,chart.$pulseSmall?2:3.5,0,Math.PI*2);
+      ctx.fillStyle=col; ctx.fill();
+      ctx.strokeStyle='#0b0e14'; ctx.lineWidth=1.4; ctx.stroke();
+      ctx.restore();
+    });
+  }
+});
+function pulseLoop(){
+  pulsePhase += 0.075;
+  [dChart, liveChart, c1, c2, ...Object.values(sparks)].forEach(ch=>{
+    if(ch && ch.$pulse && ch.$pulse.length){ try{ ch.draw(); }catch(e){} }
+  });
+  requestAnimationFrame(pulseLoop);
+}
+requestAnimationFrame(pulseLoop);
 
 const esc = s => String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const fmt = n => (n==null||isNaN(n))?'—':Number(n).toLocaleString('ja-JP');
@@ -178,6 +223,59 @@ function extractUserId(v){
   return m ? m[1] : v;
 }
 
+function broadcastsOf(st){
+  if(!st) return [];
+  const list=[...(st.history||[])];
+  if(st.current_broadcast) list.push({...st.current_broadcast, _live:true});
+  return list.map(b=>{
+    const sm=(b.samples||[]).filter(x=>x.concurrent>0);
+    if(!sm.length) return null;
+    return {
+      id:b.broadcast_id,
+      t:new Date(b.started_at).getTime(),
+      started_at:b.started_at,
+      live:!!b._live,
+      avg:Math.round(sm.reduce((a,x)=>a+x.concurrent,0)/sm.length),
+      peak:Math.max(...sm.map(x=>x.concurrent)),
+      total:sm[sm.length-1].total
+    };
+  }).filter(Boolean).sort((a,b)=>a.t-b.t);
+}
+const mdLabel = ms => { const d=new Date(ms); return `${d.getMonth()+1}/${d.getDate()}`; };
+
+function avgOf(arr){
+  const nz=arr.filter(x=>x.concurrent>0);
+  return nz.length?Math.round(nz.reduce((t,x)=>t+x.concurrent,0)/nz.length):null;
+}
+function heatmapHtml(samples){
+  const DOW=['月','火','水','木','金','土','日'];
+  const sum=Array.from({length:7},()=>Array(24).fill(0));
+  const cnt=Array.from({length:7},()=>Array(24).fill(0));
+  samples.forEach(x=>{
+    if(!(x.concurrent>0)) return;
+    const d=new Date(x.timestamp);
+    const dow=(d.getDay()+6)%7, h=d.getHours();
+    sum[dow][h]+=x.concurrent; cnt[dow][h]++;
+  });
+  let max=0;
+  const avg=sum.map((row,i)=>row.map((v,j)=>{
+    const a=cnt[i][j]?Math.round(v/cnt[i][j]):0; if(a>max)max=a; return a;
+  }));
+  if(max===0) return '<div class="empty">まだデータがありません</div>';
+  let html='<div class="hm"><div></div>';
+  for(let h=0;h<24;h++) html+=`<div class="hh">${h%3===0?h:''}</div>`;
+  html+='</div><div class="hm">';
+  for(let i=0;i<7;i++){
+    html+=`<div class="hl">${DOW[i]}</div>`;
+    for(let h=0;h<24;h++){
+      const v=avg[i][h];
+      const bg=v>0?`background:${withAlpha('#ff3b5c',0.12+0.88*(v/max))}`:'';
+      html+=`<div class="cell" ${v>0?`data-v="${v}" title="${DOW[i]} ${h}時 平均${v}"`:''} style="${bg}"></div>`;
+    }
+  }
+  html+='</div><div class="hmleg">少 <i style="background:'+withAlpha('#ff3b5c',0.15)+'"></i><i style="background:'+withAlpha('#ff3b5c',0.45)+'"></i><i style="background:'+withAlpha('#ff3b5c',0.75)+'"></i><i style="background:'+withAlpha('#ff3b5c',1)+'"></i> 多（最大 '+max+'）</div>';
+  return html;
+}
 function samplesOf(s){
   if(!s) return [];
   const a=[];
@@ -216,7 +314,13 @@ function renderCards(){
     g.innerHTML = '<div class="empty">上のバーに配信者URLを貼って追加してください</div>';
     return;
   }
-  g.innerHTML = config.broadcasters.map(b=>{
+  const sorted=[...config.broadcasters].sort((x,y)=>{
+    const lx=isLive(stats[x.user_id])?1:0, ly=isLive(stats[y.user_id])?1:0;
+    if(lx!==ly) return ly-lx;
+    const cx=(latest(stats[x.user_id])||{}).concurrent||0, cy=(latest(stats[y.user_id])||{}).concurrent||0;
+    return cy-cx;
+  });
+  g.innerHTML = sorted.map(b=>{
     const s = stats[b.user_id], live = isLive(s), l = latest(s);
     return `
     <div class="card ${live?'live':''}" onclick="openModal('${esc(b.user_id)}')">
@@ -236,7 +340,7 @@ function renderCards(){
       <button class="del" onclick="event.stopPropagation();removeBroadcaster('${esc(b.user_id)}')">✕</button>
     </div>`;
   }).join('');
-  config.broadcasters.forEach((b,i)=>drawSpark(b,i));
+  sorted.forEach((b,i)=>drawSpark(b,i));
 }
 
 const cssId = u => u.replace(/[^a-zA-Z0-9_]/g,'_');
@@ -257,43 +361,59 @@ function drawSpark(b,i){
       plugins:{legend:{display:false},tooltip:{enabled:false}},
       scales:{x:{display:false},y:{display:false}}}
   });
+  sparks[b.user_id].$pulseSmall = true;
+  sparks[b.user_id].$pulse = isLive(stats[b.user_id]) ? [0] : [];
 }
 
 function renderCombined(){
-  const ds1=[],ds2=[]; let maxLen=1;
+  const ds1=[],ds2=[];
   config.broadcasters.forEach((b,i)=>{
-    const a=samplesOf(stats[b.user_id]); if(!a.length) return;
-    maxLen=Math.max(maxLen,a.length);
+    const bs=broadcastsOf(stats[b.user_id]); if(!bs.length) return;
     const c=COLORS[i%COLORS.length];
-    const base={label:b.name,borderColor:c,backgroundColor:c+'20',borderWidth:2,pointRadius:0,tension:.3,fill:false};
-    ds1.push({...base,data:a.map(s=>s.concurrent)});
-    ds2.push({...base,data:a.map(s=>s.total)});
+    const base={label:b.name,borderColor:c,backgroundColor:c+'25',borderWidth:2,
+      pointRadius:4,pointBackgroundColor:c,tension:.25,fill:false};
+    ds1.push({...base,data:bs.map(x=>({x:x.t,y:x.avg}))});
+    ds2.push({...base,data:bs.map(x=>({x:x.t,y:x.total}))});
   });
-  const labels=Array.from({length:maxLen},(_,i)=>i+1);
-  const opt={responsive:true,maintainAspectRatio:false,animation:{duration:400},
-    plugins:{legend:{display:true,position:'bottom',labels:{color:'#8b95ad',boxWidth:10,font:{size:11}}}},
+
+  const opt=(yLabel)=>({responsive:true,maintainAspectRatio:false,animation:{duration:400},
+    parsing:false,
+    plugins:{
+      legend:{display:true,position:'bottom',labels:{color:'#8b95ad',boxWidth:10,font:{size:11}}},
+      tooltip:{callbacks:{title:(it)=>{
+        const d=new Date(it[0].parsed.x);
+        return d.toLocaleString('ja-JP',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+      },label:(it)=>`${it.dataset.label}: ${it.parsed.y.toLocaleString('ja-JP')}`}}
+    },
     scales:{
-      x:{ticks:{display:false},grid:{color:'#1e2536'}},
-      y:{beginAtZero:true,ticks:{color:'#8b95ad',font:{size:11}},grid:{color:'#1e2536'}}
-    }};
+      x:{type:'linear',ticks:{color:'#8b95ad',font:{size:10},maxTicksLimit:8,
+         callback:v=>mdLabel(v)},grid:{color:'#1e2536'}},
+      y:{beginAtZero:true,title:{display:true,text:yLabel,color:'#8b95ad',font:{size:10}},
+         ticks:{color:'#8b95ad',font:{size:11}},grid:{color:'#1e2536'}}
+    }});
+
   if(c1)c1.destroy(); if(c2)c2.destroy();
-  c1=new Chart(document.getElementById('c1'),{type:'line',data:{labels,datasets:ds1},options:opt});
-  c2=new Chart(document.getElementById('c2'),{type:'line',data:{labels,datasets:ds2},options:opt});
+  c1=new Chart(document.getElementById('c1'),{type:'line',data:{datasets:ds1},options:opt('平均同接')});
+  c2=new Chart(document.getElementById('c2'),{type:'line',data:{datasets:ds2},options:opt('総来場者')});
+  c1.$pulse=[]; c2.$pulse=[];
 }
 
 function openModal(uid){ openUid=uid; document.getElementById('mask').classList.add('show'); renderModal(uid); }
 function closeModal(){ openUid=null; document.getElementById('mask').classList.remove('show');
-  if(dChart){dChart.destroy();dChart=null;} }
+  if(dChart){dChart.destroy();dChart=null;}
+  if(liveChart){liveChart.destroy();liveChart=null;} }
 
 function renderModal(uid){
   const b = config.broadcasters.find(x=>x.user_id===uid); if(!b) return closeModal();
   const s = stats[uid], live=isLive(s), a=samplesOf(s), l=latest(s);
   const peak = a.length?Math.max(...a.map(x=>x.concurrent)):null;
-  const avg = a.length?Math.round(a.reduce((t,x)=>t+x.concurrent,0)/a.length):null;
+  const overallAvg = avgOf(a);
+  const nz = a.filter(x=>x.concurrent>0);
+  const avg = nz.length?Math.round(nz.reduce((t,x)=>t+x.concurrent,0)/nz.length):null;
 
   const hist=(s&&s.history)?[...s.history].reverse():[];
   const histAvg = hist.map(h=>{
-    const sm=h.samples||[];
+    const sm=(h.samples||[]).filter(x=>x.concurrent>0);
     return {h, avg: sm.length?Math.round(sm.reduce((t,x)=>t+x.concurrent,0)/sm.length):0,
             total: sm.length?sm[sm.length-1].total:0};
   });
@@ -312,11 +432,15 @@ function renderModal(uid){
       <div class="kpi"><div class="l">総来場者</div><div class="v">${fmt(l&&l.total)}</div></div>
       <div class="kpi"><div class="l">最高同接</div><div class="v">${fmt(peak)}</div></div>
       <div class="kpi"><div class="l">平均同接</div><div class="v">${fmt(avg)}</div></div>
+      <div class="kpi"><div class="l">通算平均同接</div><div class="v">${fmt(overallAvg)}</div></div>
       <div class="kpi"><div class="l">記録配信数</div><div class="v">${hist.length}</div></div>
     </div>
-    <div class="cbox"><h3>推移（同時接続 / 総来場者）</h3><canvas id="dc"></canvas></div>
+    <div class="cbox"><h3>配信ごとの平均同接・最高同接</h3><canvas id="dc"></canvas></div>
+    ${live?'<div class="cbox" style="margin-top:16px"><h3>現在の配信（リアルタイム）</h3><canvas id="dcLive"></canvas></div>':''}
     <div class="hist">
-      <div class="sect" style="margin-top:22px">配信ごとの平均同接</div>
+      <div class="sect" style="margin-top:22px">曜日・時間帯別 平均同接</div>
+      ${heatmapHtml(a)}
+      <div class="sect" style="margin-top:26px">配信ごとの平均同接</div>
       ${histAvg.length? histAvg.map((x,i)=>{
         const prev = histAvg[i+1];
         let t='<span class="trend flat">—</span>';
@@ -334,25 +458,53 @@ function renderModal(uid){
     </div>`;
 
   if(dChart){dChart.destroy();dChart=null;}
-  if(a.length>1){
+  if(liveChart){liveChart.destroy();liveChart=null;}
+
+  const bs=broadcastsOf(s);
+  if(bs.length){
     dChart=new Chart(document.getElementById('dc'),{
-      type:'line',
-      data:{labels:a.map(x=>new Date(x.timestamp).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'})),
+      data:{
+        labels:bs.map(x=>mdLabel(x.t)+(x.live?'(配信中)':'')),
         datasets:[
-          {label:'同時接続',data:a.map(x=>x.concurrent),borderColor:'#ff3b5c',backgroundColor:'#ff3b5c22',
-           borderWidth:2,pointRadius:0,tension:.3,fill:true,yAxisID:'y'},
-          {label:'総来場者',data:a.map(x=>x.total),borderColor:'#5b8cff',backgroundColor:'transparent',
-           borderWidth:2,pointRadius:0,tension:.3,yAxisID:'y1'}
+          {type:'bar',label:'平均同接',data:bs.map(x=>x.avg),
+           backgroundColor:bs.map(x=>x.live?'#ff3b5c':'#5b8cff'),borderRadius:4,order:2},
+          {type:'line',label:'最高同接',data:bs.map(x=>x.peak),
+           borderColor:'#2ee6a8',backgroundColor:'transparent',borderWidth:2,
+           pointRadius:3,pointBackgroundColor:'#2ee6a8',tension:.25,order:1}
         ]},
       options:{responsive:true,maintainAspectRatio:false,animation:{duration:400},
         interaction:{mode:'index',intersect:false},
         plugins:{legend:{labels:{color:'#8b95ad',boxWidth:10,font:{size:11}}}},
         scales:{
-          x:{ticks:{color:'#8b95ad',maxTicksLimit:8,font:{size:10}},grid:{color:'#1e2536'}},
-          y:{position:'left',beginAtZero:true,ticks:{color:'#ff3b5c',font:{size:10}},grid:{color:'#1e2536'}},
-          y1:{position:'right',beginAtZero:true,ticks:{color:'#5b8cff',font:{size:10}},grid:{display:false}}
+          x:{ticks:{color:'#8b95ad',font:{size:10},maxTicksLimit:14},grid:{display:false}},
+          y:{beginAtZero:true,ticks:{color:'#8b95ad',font:{size:10}},grid:{color:'#1e2536'}}
         }}
     });
+  }
+
+  if(live && a.length>1){
+    const el=document.getElementById('dcLive');
+    if(el){
+      liveChart=new Chart(el,{
+        type:'line',
+        data:{labels:a.map(x=>new Date(x.timestamp).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'})),
+          datasets:[
+            {label:'同時接続',data:a.map(x=>x.concurrent),borderColor:'#ff3b5c',backgroundColor:'#ff3b5c22',
+             borderWidth:2,pointRadius:0,tension:.3,fill:true,yAxisID:'y'},
+            {label:'総来場者',data:a.map(x=>x.total),borderColor:'#5b8cff',backgroundColor:'transparent',
+             borderWidth:2,pointRadius:0,tension:.3,yAxisID:'y1'}
+          ]},
+        options:{responsive:true,maintainAspectRatio:false,animation:{duration:400},
+          interaction:{mode:'index',intersect:false},
+          plugins:{legend:{labels:{color:'#8b95ad',boxWidth:10,font:{size:11}}}},
+          scales:{
+            x:{ticks:{color:'#8b95ad',maxTicksLimit:8,font:{size:10}},grid:{color:'#1e2536'}},
+            y:{position:'left',beginAtZero:true,ticks:{color:'#ff3b5c',font:{size:10}},grid:{color:'#1e2536'}},
+            y1:{position:'right',beginAtZero:true,ticks:{color:'#5b8cff',font:{size:10}},grid:{display:false}}
+          }}
+      });
+      liveChart.$pulse=[0,1];
+    }
   }
 }
 
@@ -375,6 +527,16 @@ async function removeBroadcaster(uid){
   try{
     await fetch(API+'/config/broadcasters/'+encodeURIComponent(uid),{method:'DELETE'});
     if(openUid===uid) closeModal();
+    await loadAll();
+  }catch(e){ showErr('削除エラー: '+e.message); }
+}
+
+async function cleanupZeros(){
+  if(!confirm('同接0の不正サンプルを全削除します。よろしいですか？')) return;
+  try{
+    const r=await fetch(API+'/cleanup',{method:'POST'});
+    const j=await r.json();
+    showErr(`${j.removed} 件の0データを削除しました`);
     await loadAll();
   }catch(e){ showErr('削除エラー: '+e.message); }
 }
