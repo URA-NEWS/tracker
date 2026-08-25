@@ -1,658 +1,605 @@
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
-const url = require('url');
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ツイキャス配信者トラッカー</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0b0e14; --panel:#141926; --panel2:#1b2233; --line:#252d40;
+  --txt:#e6ebf5; --sub:#8b95ad; --accent:#5b8cff; --live:#ff3b5c;
+  --ok:#2ee6a8; --warn:#ffb340;
+}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
+  background:var(--bg); color:var(--txt); min-height:100vh;
+}
+body::before{
+  content:""; position:fixed; inset:0; pointer-events:none;
+  background:radial-gradient(900px 500px at 15% -10%,rgba(91,140,255,.12),transparent 60%),
+             radial-gradient(700px 400px at 90% 0%,rgba(255,59,92,.08),transparent 60%);
+}
+.wrap{position:relative;max-width:1440px;margin:0 auto;padding:28px 24px 60px}
 
-const PORT = process.env.PORT || 3943;
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
+/* header */
+.hd{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:28px}
+.hd h1{font-size:20px;font-weight:800;letter-spacing:.02em}
+.hd .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 12px var(--ok);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.hd .meta{margin-left:auto;display:flex;align-items:center;gap:14px;font-size:12px;color:var(--sub)}
+.chip{background:var(--panel);border:1px solid var(--line);padding:6px 12px;border-radius:999px;font-size:12px;color:var(--sub)}
 
-// ===== Supabase 設定（未設定ならローカルファイルにフォールバック） =====
-const SB_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
-const SB_KEY = process.env.SUPABASE_SERVICE_KEY || '';
-const USE_SB = !!(SB_URL && SB_KEY);
+/* add bar */
+.addbar{display:flex;gap:10px;margin-bottom:26px;flex-wrap:wrap}
+.addbar input{
+  flex:1;min-width:260px;background:var(--panel);border:1px solid var(--line);
+  color:var(--txt);padding:12px 16px;border-radius:12px;font-size:14px;outline:none;transition:.2s
+}
+.addbar input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(91,140,255,.15)}
+.addbar input::placeholder{color:#5a6480}
+.btn{
+  background:var(--accent);color:#fff;border:0;padding:12px 22px;border-radius:12px;
+  font-size:14px;font-weight:700;cursor:pointer;transition:.2s;white-space:nowrap
+}
+.btn:hover{filter:brightness(1.12);transform:translateY(-1px)}
+.btn.ghost{background:var(--panel);color:var(--sub);border:1px solid var(--line)}
+.btn.ghost:hover{color:var(--txt)}
 
-// ツイキャス公式API（アプリケーションのみアクセス / Basic認証）
-const TC_ID = process.env.TWITCASTING_CLIENT_ID || '';
-const TC_SECRET = process.env.TWITCASTING_CLIENT_SECRET || '';
-const TC_BASIC = (TC_ID && TC_SECRET) ? Buffer.from(`${TC_ID}:${TC_SECRET}`).toString('base64') : '';
-const USE_TC_API = !!TC_BASIC;
+.err{background:rgba(255,59,92,.12);border:1px solid rgba(255,59,92,.35);color:#ff8fa3;
+  padding:12px 16px;border-radius:12px;margin-bottom:20px;font-size:13px}
 
-const CONFIG_FILE = path.join(__dirname, 'config.json');
-const STATS_FILE  = path.join(__dirname, 'stats.json');
+/* cards */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;margin-bottom:34px}
+.card{
+  background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px;
+  cursor:pointer;transition:.22s;position:relative;overflow:hidden
+}
+.card:hover{transform:translateY(-3px);border-color:#3a4665;box-shadow:0 12px 32px rgba(0,0,0,.45)}
+.card.live{border-color:rgba(255,59,92,.45)}
+.card.live::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(180deg,rgba(255,59,92,.10),transparent 45%)
+}
+.card .top{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+.avatar{width:48px;height:48px;border-radius:14px;object-fit:cover;background:var(--panel2);flex:0 0 48px}
+.nm{font-size:15px;font-weight:700;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.uid{font-size:11px;color:var(--sub);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.badge{
+  position:absolute;top:14px;right:14px;font-size:10px;font-weight:800;letter-spacing:.06em;
+  padding:4px 9px;border-radius:999px;background:var(--panel2);color:var(--sub);border:1px solid var(--line)
+}
+.tag{font-size:9px;font-weight:700;letter-spacing:.05em;padding:2px 6px;border-radius:5px;
+  background:var(--panel2);color:var(--sub);border:1px solid var(--line);margin-left:6px}
+.tag.pin{background:rgba(91,140,255,.18);color:var(--accent);border-color:transparent}
+.badge.on{background:var(--live);color:#fff;border-color:transparent}
+.nums{display:grid;grid-template-columns:1fr 1fr;gap:10px;position:relative;z-index:1}
+.num{background:var(--panel2);border-radius:12px;padding:11px 12px}
+.num .l{font-size:10px;color:var(--sub);letter-spacing:.05em;margin-bottom:5px}
+.num .v{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+.num .v.hl{color:var(--live)}
+.spark{margin-top:12px;height:38px;position:relative;z-index:1}
+.del{
+  position:absolute;bottom:14px;right:14px;background:transparent;border:0;color:#4a5570;
+  font-size:16px;cursor:pointer;padding:4px;opacity:0;transition:.2s;z-index:2
+}
+.card:hover .del{opacity:1}
+.del:hover{color:var(--live)}
 
+.empty{grid-column:1/-1;text-align:center;padding:60px 20px;color:var(--sub);font-size:14px;
+  border:1px dashed var(--line);border-radius:18px}
+
+/* combined charts */
+.sect{font-size:13px;font-weight:700;color:var(--sub);letter-spacing:.08em;margin:0 0 14px}
+.chartrow{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:900px){.chartrow{grid-template-columns:1fr}}
+.cbox{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px}
+.cbox h3{font-size:13px;font-weight:700;margin-bottom:14px;color:var(--txt)}
+.cbox canvas{height:260px!important}
+
+/* modal */
+.mask{
+  position:fixed;inset:0;background:rgba(5,7,12,.78);backdrop-filter:blur(6px);
+  display:none;align-items:center;justify-content:center;padding:24px;z-index:50
+}
+.mask.show{display:flex}
+.modal{
+  background:var(--panel);border:1px solid var(--line);border-radius:22px;width:100%;
+  max-width:980px;max-height:88vh;overflow-y:auto;padding:26px
+}
+.modal .mh{display:flex;align-items:center;gap:14px;margin-bottom:22px}
+.modal .mh .avatar{width:60px;height:60px;flex:0 0 60px;border-radius:18px}
+.modal .mh h2{font-size:20px;font-weight:800}
+.modal .mh .uid{font-size:12px}
+.x{margin-left:auto;background:var(--panel2);border:1px solid var(--line);color:var(--sub);
+  width:34px;height:34px;border-radius:10px;cursor:pointer;font-size:16px}
+.x:hover{color:var(--txt)}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:22px}
+.kpi{background:var(--panel2);border-radius:14px;padding:14px}
+.kpi .l{font-size:10px;color:var(--sub);letter-spacing:.05em;margin-bottom:6px}
+.kpi .v{font-size:24px;font-weight:800;font-variant-numeric:tabular-nums}
+.modal canvas{height:280px!important}
+.hist{margin-top:24px}
+.hrow{display:flex;align-items:center;gap:12px;padding:11px 14px;background:var(--panel2);
+  border-radius:12px;margin-bottom:8px;font-size:13px}
+.hrow .d{color:var(--sub);font-size:12px;min-width:130px}
+.hrow .s{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:700}
+.hm{display:grid;grid-template-columns:34px repeat(24,1fr);gap:2px;margin-top:6px}
+.hm .hl{font-size:9px;color:var(--sub);display:flex;align-items:center;justify-content:flex-end;padding-right:4px}
+.hm .hh{font-size:9px;color:var(--sub);text-align:center}
+.hm .cell{aspect-ratio:1;border-radius:3px;background:#161c2b;position:relative}
+.hm .cell[data-v]:hover{outline:1px solid var(--accent)}
+.hmleg{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--sub);margin-top:8px}
+.hmleg i{width:14px;height:10px;border-radius:2px;display:inline-block}
+.trend{font-size:12px;font-weight:700;padding:3px 8px;border-radius:6px}
+.up{background:rgba(46,230,168,.15);color:var(--ok)}
+.down{background:rgba(255,59,92,.15);color:var(--live)}
+.flat{background:var(--panel);color:var(--sub)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="hd">
+    <span class="dot"></span>
+    <h1>ツイキャス配信者トラッカー</h1>
+    <div class="meta">
+      <span class="chip" id="liveCount">-</span>
+      <span id="lastUpdate">—</span>
+      <button class="btn ghost" onclick="discover()">今すぐ自動収集</button>
+      <button class="btn ghost" onclick="backfill()">過去配信を取込</button>
+      <button class="btn ghost" onclick="cleanupZeros()">0データ削除</button>
+      <button class="btn ghost" onclick="exportData()">エクスポート</button>
+    </div>
+  </div>
+
+  <div class="addbar">
+    <input id="inp" placeholder="https://twitcasting.tv/xxxxx を貼り付け（Enterで追加）">
+    <button class="btn" onclick="addBroadcaster()">追加</button>
+  </div>
+
+  <div id="err"></div>
+
+  <div class="grid" id="grid"></div>
+
+  <div class="sect">配信ごとの推移（全配信者）</div>
+  <div class="chartrow">
+    <div class="cbox"><h3>配信ごとの平均同接</h3><canvas id="c1"></canvas></div>
+    <div class="cbox"><h3>配信ごとの総来場者</h3><canvas id="c2"></canvas></div>
+  </div>
+</div>
+
+<div class="mask" id="mask" onclick="if(event.target===this)closeModal()">
+  <div class="modal" id="modal"></div>
+</div>
+
+<script>
+const API = location.origin + '/api';
 let config = { broadcasters: [] };
-let broadcasterStats = {};
+let stats = {};
+let c1, c2, sparks = {}, dChart = null, liveChart = null, openUid = null;
+const COLORS = ['#5b8cff','#ff3b5c','#2ee6a8','#ffb340','#c17bff','#38d9f0','#ff7ab8','#9ee65a'];
 
-// ---------- ローカルファイル ----------
-function loadJson(file, fb) {
-  if (fs.existsSync(file)) {
-    try { return JSON.parse(fs.readFileSync(file, 'utf-8')); } catch (e) { console.error(e); }
+// ===== 現在地パルス =====
+let pulsePhase = 0;
+function withAlpha(hex, a){
+  const h = String(hex).replace('#','');
+  const r=parseInt(h.slice(0,2),16), g=parseInt(h.slice(2,4),16), b=parseInt(h.slice(4,6),16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+Chart.register({
+  id:'livePulse',
+  afterDatasetsDraw(chart){
+    const idxs = chart.$pulse;
+    if(!idxs || !idxs.length) return;
+    const t=(Math.sin(pulsePhase)+1)/2;
+    idxs.forEach(i=>{
+      const ds=chart.data.datasets[i]; if(!ds||!ds.data.length) return;
+      const meta=chart.getDatasetMeta(i); const pt=meta.data[meta.data.length-1]; if(!pt) return;
+      const col=ds.borderColor||'#ff3b5c', ctx=chart.ctx;
+      const rad=(chart.$pulseSmall?2.5:4)+t*(chart.$pulseSmall?4:9);
+      ctx.save();
+      ctx.beginPath(); ctx.arc(pt.x,pt.y,rad,0,Math.PI*2);
+      ctx.fillStyle=withAlpha(col,0.28*(1-t)); ctx.fill();
+      ctx.beginPath(); ctx.arc(pt.x,pt.y,chart.$pulseSmall?2:3.5,0,Math.PI*2);
+      ctx.fillStyle=col; ctx.fill();
+      ctx.strokeStyle='#0b0e14'; ctx.lineWidth=1.4; ctx.stroke();
+      ctx.restore();
+    });
   }
-  return fb;
-}
-function saveJson(file, data) {
-  try { fs.writeFileSync(file, JSON.stringify(data, null, 2)); } catch (e) { console.error(e); }
-}
-
-// ---------- Supabase REST ----------
-async function sb(method, table, { query = '', body = null, prefer = '' } = {}) {
-  const res = await fetch(`${SB_URL}/rest/v1/${table}${query}`, {
-    method,
-    headers: {
-      apikey: SB_KEY,
-      Authorization: `Bearer ${SB_KEY}`,
-      'Content-Type': 'application/json',
-      ...(prefer ? { Prefer: prefer } : {})
-    },
-    body: body ? JSON.stringify(body) : undefined
+});
+function pulseLoop(){
+  pulsePhase += 0.075;
+  [dChart, liveChart, c1, c2, ...Object.values(sparks)].forEach(ch=>{
+    if(ch && ch.$pulse && ch.$pulse.length){ try{ ch.draw(); }catch(e){} }
   });
-  if (!res.ok) {
-    const t = await res.text();
-    throw new Error(`Supabase ${method} ${table}: ${res.status} ${t}`);
-  }
-  const txt = await res.text();
-  return txt ? JSON.parse(txt) : null;
+  requestAnimationFrame(pulseLoop);
+}
+requestAnimationFrame(pulseLoop);
+
+const esc = s => String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const fmt = n => (n==null||isNaN(n))?'—':Number(n).toLocaleString('ja-JP');
+const PH = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2260%22 height=%2260%22%3E%3Crect fill=%22%231b2233%22 width=%2260%22 height=%2260%22/%3E%3C/svg%3E';
+
+function extractUserId(v){
+  v = v.trim();
+  const m = v.match(/twitcasting\.tv\/([^/?#]+)/);
+  return m ? m[1] : v;
 }
 
-// ---------- 起動時ロード ----------
-async function bootstrap() {
-  if (!USE_SB) {
-    config = loadJson(CONFIG_FILE, { broadcasters: [] });
-    broadcasterStats = loadJson(STATS_FILE, {});
-    console.log('[storage] local files');
-    return;
-  }
-  console.log('[storage] supabase');
-  try {
-    const bcs = await sb('GET', 'tw_broadcasters', { query: '?select=user_id,name,image,pinned,auto,last_live_at,best_peak&order=created_at.asc' });
-    config = { broadcasters: bcs || [] };
-
-    const brs = await sb('GET', 'tw_broadcasts', { query: '?select=id,user_id,started_at,ended_at,peak,total,duration,source&order=started_at.asc' });
-    const smp = await sb('GET', 'tw_samples', { query: '?select=broadcast_id,concurrent,total,ts&order=ts.asc&limit=100000' });
-
-    const byBc = {};
-    (smp || []).forEach(s => {
-      (byBc[s.broadcast_id] = byBc[s.broadcast_id] || []).push({
-        concurrent: s.concurrent, total: s.total, timestamp: s.ts
-      });
-    });
-
-    broadcasterStats = {};
-    config.broadcasters.forEach(b => {
-      broadcasterStats[b.user_id] = { user_id: b.user_id, current_broadcast: null, history: [] };
-    });
-    (brs || []).forEach(b => {
-      if (!broadcasterStats[b.user_id]) {
-        broadcasterStats[b.user_id] = { user_id: b.user_id, current_broadcast: null, history: [] };
-      }
-      const obj = {
-        broadcast_id: b.id,
-        started_at: b.started_at,
-        ended_at: b.ended_at || undefined,
-        source: b.source || 'live',
-        peak: b.peak ?? null,
-        total_final: b.total ?? null,
-        duration: b.duration ?? null,
-        samples: byBc[b.id] || []
+function broadcastsOf(st){
+  if(!st) return [];
+  const list=[...(st.history||[])];
+  if(st.current_broadcast) list.push({...st.current_broadcast, _live:true});
+  return list.map(b=>{
+    const sm=(b.samples||[]).filter(x=>x.concurrent>0);
+    if(sm.length){
+      return {
+        id:b.broadcast_id, t:new Date(b.started_at).getTime(), started_at:b.started_at,
+        live:!!b._live, archive:false,
+        avg:Math.round(sm.reduce((a,x)=>a+x.concurrent,0)/sm.length),
+        peak:Math.max(...sm.map(x=>x.concurrent)),
+        total:sm[sm.length-1].total
       };
-      if (b.ended_at) broadcasterStats[b.user_id].history.push(obj);
-      else broadcasterStats[b.user_id].current_broadcast = obj;
-    });
-  } catch (e) {
-    console.error('[bootstrap] Supabase読み込み失敗、ローカルにフォールバック:', e.message);
-    config = loadJson(CONFIG_FILE, { broadcasters: [] });
-    broadcasterStats = loadJson(STATS_FILE, {});
-  }
-}
-
-// ---------- 永続化 ----------
-async function persistBroadcasterAdd(b) {
-  if (!USE_SB) { saveJson(CONFIG_FILE, config); return; }
-  await sb('POST', 'tw_broadcasters', { body: [b], prefer: 'resolution=merge-duplicates' });
-}
-async function persistBroadcasterDelete(uid) {
-  if (!USE_SB) { saveJson(CONFIG_FILE, config); saveJson(STATS_FILE, broadcasterStats); return; }
-  const q = `?user_id=eq.${encodeURIComponent(uid)}`;
-  await sb('DELETE', 'tw_samples', { query: q });
-  await sb('DELETE', 'tw_broadcasts', { query: q });
-  await sb('DELETE', 'tw_broadcasters', { query: q });
-}
-async function persistBroadcastStart(uid, b) {
-  if (!USE_SB) { saveJson(STATS_FILE, broadcasterStats); return; }
-  await sb('POST', 'tw_broadcasts', {
-    body: [{ id: b.broadcast_id, user_id: uid, started_at: b.started_at }],
-    prefer: 'resolution=merge-duplicates'
-  });
-}
-async function persistBroadcastEnd(bid, endedAt) {
-  if (!USE_SB) { saveJson(STATS_FILE, broadcasterStats); return; }
-  await sb('PATCH', 'tw_broadcasts', {
-    query: `?id=eq.${encodeURIComponent(bid)}`,
-    body: { ended_at: endedAt }
-  });
-}
-async function persistSample(uid, bid, s) {
-  if (!USE_SB) { saveJson(STATS_FILE, broadcasterStats); return; }
-  await sb('POST', 'tw_samples', {
-    body: [{ broadcast_id: bid, user_id: uid, concurrent: s.concurrent, total: s.total, ts: s.timestamp }]
-  });
-}
-
-// ---------- ツイキャス: 名前・アイコン ----------
-async function fetchUserInfo(userId) {
-  // 公式APIが使える場合はそちらを優先（正確な配信者名・アイコン）
-  if (USE_TC_API) {
-    try {
-      const r = await fetch(`https://apiv2.twitcasting.tv/users/${encodeURIComponent(userId)}`, {
-        headers: { 'X-Api-Version': '2.0', Authorization: `Basic ${TC_BASIC}`, Accept: 'application/json' }
-      });
-      if (r.ok) {
-        const j = await r.json();
-        if (j && j.user) {
-          return {
-            name: j.user.name || j.user.screen_id || userId,
-            image: (j.user.image || '').replace(/^http:/, 'https:').replace(/_normal\.(jpg|png)/, '_400x400.$1') || null
-          };
-        }
-      }
-      if (r.status === 404) return null;
-    } catch (e) { /* HTMLへフォールバック */ }
-  }
-  try {
-    const res = await fetch(`https://twitcasting.tv/${encodeURIComponent(userId)}`, { headers: { 'User-Agent': UA, 'Accept-Language': 'ja' } });
-    if (!res.ok) return null;
-    const html = await res.text();
-    if (html.includes('お探しのページは見つかりません') || html.includes('Page Not Found')) return null;
-
-    let name = null, image = null;
-
-    // 配信者名: <title> の "○○ (@id) 's Live" から取る（og:title は配信タイトルなので使わない）
-    const t = html.match(/<title>([\s\S]*?)<\/title>/i);
-    if (t) {
-      let raw = t[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").trim();
-      const byAt = raw.match(/^(.*?)\s*\(@[^)]+\)/);
-      if (byAt) name = byAt[1].trim();
-      if (!name) name = raw.split(/\s*[-|｜]\s*/)[0].trim();
     }
-
-    // アイコン: プロフィール画像（image3s のパス）。og:image は配信サムネなので使わない
-    let m = html.match(/https?:\/\/imagegw\d*\.twitcasting\.tv\/image3s\/[^"'\s\\)]+/);
-    if (m) image = m[0];
-    if (!image) {
-      m = html.match(/https?:\/\/[^"'\s\\)]*pbs\.twimg\.com\/profile_images\/[^"'\s\\)]+/);
-      if (m) image = m[0];
+    // 過去配信（サンプル無し・最高同接と総来場者のみ）
+    if(b.source==='archive' && (b.peak||b.total_final)){
+      return {
+        id:b.broadcast_id, t:new Date(b.started_at).getTime(), started_at:b.started_at,
+        live:false, archive:true,
+        avg:null, peak:b.peak||0, total:b.total_final||0, duration:b.duration||0
+      };
     }
-    if (!image) {
-      m = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
-      if (m) image = m[1];
-    }
-    if (image) image = image.replace(/^http:/, 'https:').replace(/_bigger\.(jpg|png)/, '_400x400.$1');
-
-    return { name: name || userId, image: image || null };
-  } catch (e) {
-    console.error(`fetchUserInfo (${userId}):`, e.message);
     return null;
-  }
+  }).filter(Boolean).sort((a,b)=>a.t-b.t);
 }
+const mdLabel = ms => { const d=new Date(ms); return `${d.getMonth()+1}/${d.getDate()}`; };
 
-// 起動時に既存配信者の名前・アイコンを更新
-async function refreshAllUserInfo() {
-  for (const b of config.broadcasters) {
-    try {
-      const info = await fetchUserInfo(b.user_id);
-      if (!info) continue;
-      if (info.name !== b.name || info.image !== b.image) {
-        b.name = info.name; b.image = info.image;
-        await persistBroadcasterAdd(b);
-        console.log(`[${b.user_id}] プロフィール更新: ${b.name}`);
-      }
-    } catch (e) { console.error('refresh:', e.message); }
-  }
-  if (!USE_SB) saveJson(CONFIG_FILE, config);
+function avgOf(arr){
+  const nz=arr.filter(x=>x.concurrent>0);
+  return nz.length?Math.round(nz.reduce((t,x)=>t+x.concurrent,0)/nz.length):null;
 }
-
-// ---------- ツイキャス: 配信状態・視聴数 ----------
-
-// 1) 配信中か & movie_id を取得（yt-dlp/streamlink と同じ確実な経路）
-async function fetchLiveInfo(userId) {
-  try {
-    const res = await fetch(
-      `https://twitcasting.tv/streamserver.php?target=${encodeURIComponent(userId)}&mode=client&player=pc_web`,
-      { headers: { 'User-Agent': UA, Accept: 'application/json' } }
-    );
-    if (!res.ok) return { live: false, movie_id: null, status: res.status };
-    const j = await res.json();
-    const m = j && j.movie;
-    return { live: !!(m && m.live), movie_id: m && m.id ? String(m.id) : null, status: res.status };
-  } catch (e) {
-    return { live: false, movie_id: null, error: e.message };
-  }
-}
-
-// 2) 公式API（apiv2）で現在の配信情報を取得
-async function fetchCurrentLiveApi(userId) {
-  if (!USE_TC_API) return { ok: false, reason: 'no_credentials' };
-  try {
-    const r = await fetch(`https://apiv2.twitcasting.tv/users/${encodeURIComponent(userId)}/current_live`, {
-      headers: {
-        'X-Api-Version': '2.0',
-        Authorization: `Basic ${TC_BASIC}`,
-        Accept: 'application/json'
-      }
-    });
-    if (r.status === 404) return { ok: true, live: false };
-    if (!r.ok) return { ok: false, reason: `status_${r.status}`, body: (await r.text()).slice(0, 300) };
-    const j = await r.json();
-    const m = j && j.movie;
-    if (!m || !m.is_live) return { ok: true, live: false };
-    return {
-      ok: true,
-      live: true,
-      movie_id: String(m.id),
-      concurrent: Number(m.current_view_count ?? 0),
-      total: Number(m.total_view_count ?? 0),
-      broadcaster: j.broadcaster || null
-    };
-  } catch (e) {
-    return { ok: false, reason: e.message };
-  }
-}
-
-async function fetchBroadcastStats(userId) {
-  // 公式APIが使えるならそれが最も正確
-  const api = await fetchCurrentLiveApi(userId);
-  if (api.ok) {
-    if (!api.live) return null;
-    return { concurrent: api.concurrent, total: api.total, timestamp: new Date().toISOString() };
-  }
-
-  // フォールバック: 配信中かどうかだけ判定（視聴数は0）
-  const info = await fetchLiveInfo(userId);
-  if (!info.live) return null;
-  return { concurrent: 0, total: 0, timestamp: new Date().toISOString() };
-}
-
-// ---------- 過去配信の取り込み ----------
-async function backfillUser(userId, maxMovies = 500) {
-  if (!USE_TC_API) return { ok: false, reason: 'no_credentials' };
-  let offset = 0, imported = 0, scanned = 0, totalCount = null;
-
-  while (scanned < maxMovies) {
-    let j;
-    try {
-      const r = await fetch(
-        `https://apiv2.twitcasting.tv/users/${encodeURIComponent(userId)}/movies?offset=${offset}&limit=50`,
-        { headers: { 'X-Api-Version': '2.0', Authorization: `Basic ${TC_BASIC}`, Accept: 'application/json' } }
-      );
-      if (!r.ok) return { ok: false, reason: `status_${r.status}`, imported };
-      j = await r.json();
-    } catch (e) { return { ok: false, reason: e.message, imported }; }
-
-    const movies = (j && j.movies) || [];
-    if (totalCount === null) totalCount = j.total_count ?? null;
-    if (!movies.length) break;
-
-    if (!broadcasterStats[userId]) broadcasterStats[userId] = { user_id: userId, current_broadcast: null, history: [] };
-
-    const rows = [];
-    for (const m of movies) {
-      scanned++;
-      if (m.is_live) continue;
-      const startedMs = Number(m.created) * 1000;
-      if (!startedMs) continue;
-      const dur = Number(m.duration || 0);
-      const peak = Number(m.max_view_count ?? 0);
-      const total = Number(m.total_view_count ?? m.current_view_count ?? 0);
-      if (!peak && !total) continue;
-
-      const id = `arc_${userId}_${m.id}`;
-      if (broadcasterStats[userId].history.some(h => h.broadcast_id === id)) continue;
-
-      const obj = {
-        broadcast_id: id,
-        started_at: new Date(startedMs).toISOString(),
-        ended_at: new Date(startedMs + dur * 1000).toISOString(),
-        source: 'archive',
-        peak, total_final: total, duration: dur,
-        samples: []
-      };
-      broadcasterStats[userId].history.push(obj);
-      rows.push({
-        id, user_id: userId,
-        started_at: obj.started_at, ended_at: obj.ended_at,
-        peak, total, duration: dur, source: 'archive'
-      });
-      imported++;
-    }
-
-    if (rows.length && USE_SB) {
-      try { await sb('POST', 'tw_broadcasts', { body: rows, prefer: 'resolution=merge-duplicates' }); }
-      catch (e) { console.error('backfill upsert:', e.message); }
-    }
-
-    offset += movies.length;
-    if (totalCount !== null && offset >= totalCount) break;
-  }
-
-  broadcasterStats[userId].history.sort((a, b) => new Date(a.started_at) - new Date(b.started_at));
-  if (!USE_SB) saveJson(STATS_FILE, broadcasterStats);
-  return { ok: true, imported, scanned };
-}
-
-// ---------- 自動収集（同接上位50人） ----------
-const AUTO_LIMIT = 50;
-
-async function discoverTopLives() {
-  if (!USE_TC_API) return { ok: false, reason: 'no_credentials' };
-  let movies = [];
-  try {
-    const r = await fetch('https://apiv2.twitcasting.tv/search/lives?limit=100&type=recommend&lang=ja', {
-      headers: { 'X-Api-Version': '2.0', Authorization: `Basic ${TC_BASIC}`, Accept: 'application/json' }
-    });
-    if (!r.ok) return { ok: false, reason: `status_${r.status}` };
-    const j = await r.json();
-    movies = (j && j.movies) || [];
-  } catch (e) { return { ok: false, reason: e.message }; }
-
-  const cands = movies
-    .map(x => ({
-      user_id: (x.broadcaster && x.broadcaster.screen_id) || null,
-      name: (x.broadcaster && x.broadcaster.name) || null,
-      image: (x.broadcaster && x.broadcaster.image) || null,
-      viewers: Number((x.movie && x.movie.current_view_count) || 0)
-    }))
-    .filter(c => c.user_id)
-    .sort((a, b) => b.viewers - a.viewers);
-
-  const known = new Set(config.broadcasters.map(b => b.user_id));
-  let autoCount = config.broadcasters.filter(b => b.auto).length;
-  const added = [];
-
-  for (const c of cands) {
-    if (autoCount >= AUTO_LIMIT) break;
-    if (known.has(c.user_id)) continue;
-
-    const b = {
-      user_id: c.user_id,
-      name: c.name || c.user_id,
-      image: (c.image || '').replace(/^http:/, 'https:').replace(/_normal\.(jpg|png)/, '_400x400.$1') || null,
-      pinned: false,
-      auto: true,
-      best_peak: c.viewers,
-      last_live_at: new Date().toISOString()
-    };
-    config.broadcasters.push(b);
-    broadcasterStats[b.user_id] = { user_id: b.user_id, current_broadcast: null, history: [] };
-    known.add(b.user_id);
-    autoCount++;
-    added.push({ user_id: b.user_id, name: b.name, viewers: c.viewers });
-    try { await persistBroadcasterAdd(b); } catch (e) { console.error('auto add:', e.message); }
-  }
-
-  if (!USE_SB) saveJson(CONFIG_FILE, config);
-  if (added.length) console.log(`[auto] ${added.length}人を自動追加 (auto枠 ${autoCount}/${AUTO_LIMIT})`);
-  return { ok: true, added, auto_slots: `${autoCount}/${AUTO_LIMIT}`, candidates: cands.length };
-}
-
-// 自動枠の整理: 配信実績が最も低い auto を削除して枠を空ける
-async function pruneAuto(keep = AUTO_LIMIT) {
-  const autos = config.broadcasters.filter(b => b.auto);
-  if (autos.length <= keep) return { removed: 0 };
-  autos.sort((a, b) => (a.best_peak || 0) - (b.best_peak || 0));
-  const drop = autos.slice(0, autos.length - keep);
-  for (const b of drop) {
-    config.broadcasters = config.broadcasters.filter(x => x.user_id !== b.user_id);
-    delete broadcasterStats[b.user_id];
-    try { await persistBroadcasterDelete(b.user_id); } catch (e) { console.error('prune:', e.message); }
-  }
-  if (!USE_SB) { saveJson(CONFIG_FILE, config); saveJson(STATS_FILE, broadcasterStats); }
-  return { removed: drop.length };
-}
-
-// ---------- 監視ループ ----------
-let monitoring = false;
-const offlineCheckedAt = {};   // user_id -> ms
-const OFFLINE_INTERVAL = 5 * 60 * 1000; // オフラインの人は5分に1回だけ確認
-
-async function monitorBroadcasters() {
-  if (monitoring) return;
-  if (!config.broadcasters || !config.broadcasters.length) return;
-  monitoring = true;
-  const now = Date.now();
-  try {
-    for (const bc of config.broadcasters) {
-      const uid = bc.user_id;
-      if (!broadcasterStats[uid]) broadcasterStats[uid] = { user_id: uid, current_broadcast: null, history: [] };
-
-      const wasLive = !!broadcasterStats[uid].current_broadcast;
-      if (!wasLive) {
-        const last = offlineCheckedAt[uid] || 0;
-        if (now - last < OFFLINE_INTERVAL) continue;
-        offlineCheckedAt[uid] = now;
-      }
-
-      const s = await fetchBroadcastStats(uid);
-
-      if (s) {
-        if (!wasLive) {
-          const b = { broadcast_id: `${uid}_${Date.now()}`, started_at: s.timestamp, samples: [s], source: 'live' };
-          broadcasterStats[uid].current_broadcast = b;
-          console.log(`[${uid}] 配信開始 ${s.concurrent}/${s.total}`);
-          try { await persistBroadcastStart(uid, b); await persistSample(uid, b.broadcast_id, s); }
-          catch (e) { console.error('persist start:', e.message); }
-        } else {
-          const b = broadcasterStats[uid].current_broadcast;
-          b.samples.push(s);
-          try { await persistSample(uid, b.broadcast_id, s); }
-          catch (e) { console.error('persist sample:', e.message); }
-        }
-        // 実績更新
-        if (s.concurrent > (bc.best_peak || 0)) {
-          bc.best_peak = s.concurrent;
-          bc.last_live_at = s.timestamp;
-          try { await persistBroadcasterAdd(bc); } catch (e) {}
-        }
-        if (!USE_SB) saveJson(STATS_FILE, broadcasterStats);
-      } else if (wasLive) {
-        const b = broadcasterStats[uid].current_broadcast;
-        b.ended_at = new Date().toISOString();
-        broadcasterStats[uid].history.push(b);
-        broadcasterStats[uid].current_broadcast = null;
-        offlineCheckedAt[uid] = now;
-        console.log(`[${uid}] 配信終了 samples=${b.samples.length}`);
-        try { await persistBroadcastEnd(b.broadcast_id, b.ended_at); }
-        catch (e) { console.error('persist end:', e.message); }
-        if (!USE_SB) saveJson(STATS_FILE, broadcasterStats);
-      }
-    }
-  } finally {
-    monitoring = false;
-  }
-}
-
-// ---------- HTTP ----------
-const server = http.createServer((req, res) => {
-  const pathname = url.parse(req.url, true).pathname;
-
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') { res.writeHead(200); res.end(); return; }
-
-  if (pathname === '/healthz') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      ok: true,
-      storage: USE_SB ? 'supabase' : 'local',
-      official_api: USE_TC_API,
-      auto_slots: `${config.broadcasters.filter(b => b.auto).length}/${AUTO_LIMIT}`,
-      broadcasters: config.broadcasters.length,
-      live: config.broadcasters.filter(b => broadcasterStats[b.user_id]?.current_broadcast).length,
-      time: new Date().toISOString()
-    }));
-    return;
-  }
-
-
-  // 生データ確認用: /api/debug/<user_id>
-  if (pathname.startsWith('/api/debug/')) {
-    (async () => {
-      const uid = decodeURIComponent(pathname.replace('/api/debug/', ''));
-      const out = { user_id: uid, official_api_enabled: USE_TC_API };
-      out.currentLiveApi = await fetchCurrentLiveApi(uid);
-      out.streamserver = await fetchLiveInfo(uid);
-      out.parsed = await fetchBroadcastStats(uid);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(out, null, 2));
-    })();
-    return;
-  }
-
-  // 自動収集を今すぐ実行: POST /api/discover
-  if (pathname === '/api/discover' && req.method === 'POST') {
-    (async () => {
-      const r = await discoverTopLives();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(r, null, 2));
-    })();
-    return;
-  }
-
-  // 自動枠の整理: POST /api/prune
-  if (pathname === '/api/prune' && req.method === 'POST') {
-    (async () => {
-      const r = await pruneAuto();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(r, null, 2));
-    })();
-    return;
-  }
-
-  // 過去配信の取り込み: POST /api/backfill  または /api/backfill/<user_id>
-  if (pathname.startsWith('/api/backfill') && req.method === 'POST') {
-    (async () => {
-      const spec = pathname.replace('/api/backfill', '').replace(/^\//, '');
-      const targets = spec ? [decodeURIComponent(spec)] : config.broadcasters.map(b => b.user_id);
-      const result = {};
-      for (const uid of targets) result[uid] = await backfillUser(uid);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(result, null, 2));
-    })();
-    return;
-  }
-
-  // 0サンプル一括削除: POST /api/cleanup
-  if (pathname === '/api/cleanup' && req.method === 'POST') {
-    (async () => {
-      let removed = 0;
-      const strip = (arr) => {
-        const before = arr.length;
-        const out = arr.filter(x => !(Number(x.concurrent) === 0 && Number(x.total) === 0));
-        removed += before - out.length;
-        return out;
-      };
-      for (const uid of Object.keys(broadcasterStats)) {
-        const st = broadcasterStats[uid];
-        if (st.current_broadcast) st.current_broadcast.samples = strip(st.current_broadcast.samples || []);
-        st.history = (st.history || []).map(b => ({ ...b, samples: strip(b.samples || []) }));
-      }
-      if (USE_SB) {
-        try { await sb('DELETE', 'tw_samples', { query: '?concurrent=eq.0&total=eq.0' }); }
-        catch (e) { console.error('cleanup:', e.message); }
-      } else {
-        saveJson(STATS_FILE, broadcasterStats);
-      }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ removed }));
-    })();
-    return;
-  }
-
-  if (pathname === '/api/twitcas/stats' && req.method === 'GET') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(broadcasterStats));
-    return;
-  }
-
-  if (pathname === '/api/config' && req.method === 'GET') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(config));
-    return;
-  }
-
-  if (pathname === '/api/config/broadcasters' && req.method === 'POST') {
-    let body = '';
-    req.on('data', c => body += c);
-    req.on('end', async () => {
-      try {
-        const data = JSON.parse(body || '{}');
-        const uid = String(data.user_id || '').trim();
-        if (!uid) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'user_id が空です' })); return; }
-        if (config.broadcasters.some(b => b.user_id === uid)) {
-          res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'すでに追加済みです' })); return;
-        }
-        const info = await fetchUserInfo(uid);
-        if (!info) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: `ユーザーが見つかりません: ${uid}` })); return; }
-
-        const b = { user_id: uid, name: info.name, image: info.image, pinned: true, auto: false, best_peak: 0 };
-        config.broadcasters.push(b);
-        broadcasterStats[uid] = { user_id: uid, current_broadcast: null, history: [] };
-        await persistBroadcasterAdd(b);
-
-        monitorBroadcasters();
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(b));
-      } catch (e) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: e.message }));
-      }
-    });
-    return;
-  }
-
-  if (pathname.startsWith('/api/config/broadcasters/') && req.method === 'DELETE') {
-    (async () => {
-      const uid = decodeURIComponent(pathname.replace('/api/config/broadcasters/', ''));
-      config.broadcasters = config.broadcasters.filter(b => b.user_id !== uid);
-      delete broadcasterStats[uid];
-      try { await persistBroadcasterDelete(uid); } catch (e) { console.error(e.message); }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true }));
-    })();
-    return;
-  }
-
-  if (pathname === '/' || pathname === '/index.html') {
-    fs.readFile(path.join(__dirname, 'index.html'), 'utf-8', (err, data) => {
-      if (err) { res.writeHead(500); res.end('Error loading index.html'); return; }
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(data);
-    });
-    return;
-  }
-
-  res.writeHead(404);
-  res.end('Not found');
-});
-
-// ---------- 起動 ----------
-bootstrap().then(() => {
-  server.listen(PORT, () => {
-    console.log(`Twitcas Tracker on :${PORT} / storage=${USE_SB ? 'supabase' : 'local'} / officialAPI=${USE_TC_API} / broadcasters=${config.broadcasters.length}`);
+function heatmapHtml(samples){
+  const DOW=['月','火','水','木','金','土','日'];
+  const sum=Array.from({length:7},()=>Array(24).fill(0));
+  const cnt=Array.from({length:7},()=>Array(24).fill(0));
+  samples.forEach(x=>{
+    if(!(x.concurrent>0)) return;
+    const d=new Date(x.timestamp);
+    const dow=(d.getDay()+6)%7, h=d.getHours();
+    sum[dow][h]+=x.concurrent; cnt[dow][h]++;
   });
-  refreshAllUserInfo();
-  discoverTopLives();
-  setInterval(discoverTopLives, 5 * 60 * 1000);
-  setInterval(refreshAllUserInfo, 6 * 60 * 60 * 1000);
-  setInterval(monitorBroadcasters, 15000);
-  monitorBroadcasters();
-
-  // Render無料プランのスリープ防止（自分の公開URLを10分ごとに叩く）
-  const SELF = process.env.RENDER_EXTERNAL_URL || process.env.SELF_URL;
-  if (SELF) {
-    setInterval(() => {
-      fetch(`${SELF.replace(/\/+$/, '')}/healthz`).catch(() => {});
-    }, 10 * 60 * 1000);
-    console.log(`[keepalive] ${SELF}/healthz を10分ごとにping`);
+  let max=0;
+  const avg=sum.map((row,i)=>row.map((v,j)=>{
+    const a=cnt[i][j]?Math.round(v/cnt[i][j]):0; if(a>max)max=a; return a;
+  }));
+  if(max===0) return '<div class="empty">まだデータがありません</div>';
+  let html='<div class="hm"><div></div>';
+  for(let h=0;h<24;h++) html+=`<div class="hh">${h%3===0?h:''}</div>`;
+  html+='</div><div class="hm">';
+  for(let i=0;i<7;i++){
+    html+=`<div class="hl">${DOW[i]}</div>`;
+    for(let h=0;h<24;h++){
+      const v=avg[i][h];
+      const bg=v>0?`background:${withAlpha('#ff3b5c',0.12+0.88*(v/max))}`:'';
+      html+=`<div class="cell" ${v>0?`data-v="${v}" title="${DOW[i]} ${h}時 平均${v}"`:''} style="${bg}"></div>`;
+    }
   }
-});
+  html+='</div><div class="hmleg">少 <i style="background:'+withAlpha('#ff3b5c',0.15)+'"></i><i style="background:'+withAlpha('#ff3b5c',0.45)+'"></i><i style="background:'+withAlpha('#ff3b5c',0.75)+'"></i><i style="background:'+withAlpha('#ff3b5c',1)+'"></i> 多（最大 '+max+'）</div>';
+  return html;
+}
+function samplesOf(s){
+  if(!s) return [];
+  const a=[];
+  (s.history||[]).forEach(b=>a.push(...(b.samples||[])));
+  if(s.current_broadcast) a.push(...(s.current_broadcast.samples||[]));
+  return a.sort((x,y)=>new Date(x.timestamp)-new Date(y.timestamp));
+}
+const isLive = s => !!(s && s.current_broadcast);
+function latest(s){ const a=samplesOf(s); return a.length?a[a.length-1]:null; }
+
+async function loadAll(){
+  try{
+    const [c,st] = await Promise.all([
+      fetch(API+'/config').then(r=>r.json()),
+      fetch(API+'/twitcas/stats').then(r=>r.json())
+    ]);
+    config = c && c.broadcasters ? c : {broadcasters:[]};
+    stats = st || {};
+    render();
+    document.getElementById('lastUpdate').textContent =
+      new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  }catch(e){ showErr('取得エラー: '+e.message); }
+}
+
+function render(){
+  renderCards();
+  renderCombined();
+  if(openUid) renderModal(openUid);
+  const n = config.broadcasters.filter(b=>isLive(stats[b.user_id])).length;
+  const au = config.broadcasters.filter(b=>b.auto).length;
+  document.getElementById('liveCount').textContent = `配信中 ${n} / ${config.broadcasters.length}（自動 ${au}/50）`;
+}
+
+function renderCards(){
+  const g = document.getElementById('grid');
+  if(!config.broadcasters.length){
+    g.innerHTML = '<div class="empty">上のバーに配信者URLを貼って追加してください</div>';
+    return;
+  }
+  const sorted=[...config.broadcasters].sort((x,y)=>{
+    const lx=isLive(stats[x.user_id])?1:0, ly=isLive(stats[y.user_id])?1:0;
+    if(lx!==ly) return ly-lx;
+    const px=x.pinned?1:0, py=y.pinned?1:0;
+    if(px!==py) return py-px;
+    const cx=(latest(stats[x.user_id])||{}).concurrent||0, cy=(latest(stats[y.user_id])||{}).concurrent||0;
+    return cy-cx;
+  });
+  g.innerHTML = sorted.map(b=>{
+    const s = stats[b.user_id], live = isLive(s), l = latest(s);
+    return `
+    <div class="card ${live?'live':''}" onclick="openModal('${esc(b.user_id)}')">
+      <div class="badge ${live?'on':''}">${live?'● LIVE':'OFFLINE'}</div>
+      <div class="top">
+        <img class="avatar" src="${esc(b.image||PH)}" onerror="this.src='${PH}'">
+        <div style="min-width:0">
+          <div class="nm">${esc(b.name)}</div>
+          <div class="uid">${esc(b.user_id)}<span class="tag ${b.pinned?'pin':''}">${b.pinned?'手動':'自動'}</span></div>
+        </div>
+      </div>
+      <div class="nums">
+        <div class="num"><div class="l">同時接続</div><div class="v ${live?'hl':''}">${fmt(l&&l.concurrent)}</div></div>
+        <div class="num"><div class="l">総来場者</div><div class="v">${fmt(l&&l.total)}</div></div>
+      </div>
+      <div class="spark"><canvas id="sp_${cssId(b.user_id)}"></canvas></div>
+      <button class="del" onclick="event.stopPropagation();removeBroadcaster('${esc(b.user_id)}')">✕</button>
+    </div>`;
+  }).join('');
+  sorted.forEach((b,i)=>drawSpark(b,i));
+}
+
+const cssId = u => u.replace(/[^a-zA-Z0-9_]/g,'_');
+
+function drawSpark(b,i){
+  const el = document.getElementById('sp_'+cssId(b.user_id));
+  if(!el) return;
+  const a = samplesOf(stats[b.user_id]).slice(-40);
+  if(sparks[b.user_id]){ sparks[b.user_id].destroy(); delete sparks[b.user_id]; }
+  if(a.length<2) return;
+  sparks[b.user_id] = new Chart(el.getContext('2d'),{
+    type:'line',
+    data:{labels:a.map(()=>''),datasets:[{
+      data:a.map(s=>s.concurrent),borderColor:COLORS[i%COLORS.length],
+      backgroundColor:COLORS[i%COLORS.length]+'22',borderWidth:2,pointRadius:0,tension:.35,fill:true
+    }]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
+      plugins:{legend:{display:false},tooltip:{enabled:false}},
+      scales:{x:{display:false},y:{display:false}}}
+  });
+  sparks[b.user_id].$pulseSmall = true;
+  sparks[b.user_id].$pulse = isLive(stats[b.user_id]) ? [0] : [];
+}
+
+function renderCombined(){
+  const ds1=[],ds2=[];
+  config.broadcasters.forEach((b,i)=>{
+    const bs=broadcastsOf(stats[b.user_id]); if(!bs.length) return;
+    const c=COLORS[i%COLORS.length];
+    const base={label:b.name,borderColor:c,backgroundColor:c+'25',borderWidth:2,
+      pointRadius:4,pointBackgroundColor:c,tension:.25,fill:false};
+    ds1.push({...base,data:bs.map(x=>({x:x.t,y:(x.avg!=null?x.avg:x.peak)}))});
+    ds2.push({...base,data:bs.map(x=>({x:x.t,y:x.total}))});
+  });
+
+  const opt=(yLabel)=>({responsive:true,maintainAspectRatio:false,animation:{duration:400},
+    parsing:false,
+    plugins:{
+      legend:{display:true,position:'bottom',labels:{color:'#8b95ad',boxWidth:10,font:{size:11}}},
+      tooltip:{callbacks:{title:(it)=>{
+        const d=new Date(it[0].parsed.x);
+        return d.toLocaleString('ja-JP',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+      },label:(it)=>`${it.dataset.label}: ${it.parsed.y.toLocaleString('ja-JP')}`}}
+    },
+    scales:{
+      x:{type:'linear',ticks:{color:'#8b95ad',font:{size:10},maxTicksLimit:8,
+         callback:v=>mdLabel(v)},grid:{color:'#1e2536'}},
+      y:{beginAtZero:true,title:{display:true,text:yLabel,color:'#8b95ad',font:{size:10}},
+         ticks:{color:'#8b95ad',font:{size:11}},grid:{color:'#1e2536'}}
+    }});
+
+  if(c1)c1.destroy(); if(c2)c2.destroy();
+  c1=new Chart(document.getElementById('c1'),{type:'line',data:{datasets:ds1},options:opt('平均同接（過去分は最高同接）')});
+  c2=new Chart(document.getElementById('c2'),{type:'line',data:{datasets:ds2},options:opt('総来場者')});
+  c1.$pulse=[]; c2.$pulse=[];
+}
+
+function openModal(uid){ openUid=uid; document.getElementById('mask').classList.add('show'); renderModal(uid); }
+function closeModal(){ openUid=null; document.getElementById('mask').classList.remove('show');
+  if(dChart){dChart.destroy();dChart=null;}
+  if(liveChart){liveChart.destroy();liveChart=null;} }
+
+function renderModal(uid){
+  const b = config.broadcasters.find(x=>x.user_id===uid); if(!b) return closeModal();
+  const s = stats[uid], live=isLive(s), a=samplesOf(s), l=latest(s);
+  const peak = a.length?Math.max(...a.map(x=>x.concurrent)):null;
+  const overallAvg = avgOf(a);
+  const bsAll = broadcastsOf(s);
+  const nz = a.filter(x=>x.concurrent>0);
+  const avg = nz.length?Math.round(nz.reduce((t,x)=>t+x.concurrent,0)/nz.length):null;
+
+  const hist=(s&&s.history)?[...s.history].reverse():[];
+  const histAvg = hist.map(h=>{
+    const sm=(h.samples||[]).filter(x=>x.concurrent>0);
+    return {h, avg: sm.length?Math.round(sm.reduce((t,x)=>t+x.concurrent,0)/sm.length):0,
+            total: sm.length?sm[sm.length-1].total:0};
+  });
+
+  document.getElementById('modal').innerHTML = `
+    <div class="mh">
+      <img class="avatar" src="${esc(b.image||PH)}" onerror="this.src='${PH}'">
+      <div style="min-width:0">
+        <h2>${esc(b.name)}</h2>
+        <div class="uid">${esc(b.user_id)} ・ ${live?'<span style="color:var(--live);font-weight:700">配信中</span>':'オフライン'}</div>
+      </div>
+      <button class="x" onclick="closeModal()">✕</button>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><div class="l">現在の同時接続</div><div class="v">${fmt(l&&l.concurrent)}</div></div>
+      <div class="kpi"><div class="l">総来場者</div><div class="v">${fmt(l&&l.total)}</div></div>
+      <div class="kpi"><div class="l">最高同接</div><div class="v">${fmt(peak)}</div></div>
+      <div class="kpi"><div class="l">平均同接</div><div class="v">${fmt(avg)}</div></div>
+      <div class="kpi"><div class="l">通算平均同接</div><div class="v">${fmt(overallAvg)}</div></div>
+      <div class="kpi"><div class="l">記録配信数</div><div class="v">${hist.length}</div></div>
+    </div>
+    <div class="cbox"><h3>配信ごとの平均同接・最高同接</h3><canvas id="dc"></canvas></div>
+    ${live?'<div class="cbox" style="margin-top:16px"><h3>現在の配信（リアルタイム）</h3><canvas id="dcLive"></canvas></div>':''}
+    <div class="hist">
+      <div class="sect" style="margin-top:22px">曜日・時間帯別 平均同接</div>
+      ${heatmapHtml(a)}
+      <div class="sect" style="margin-top:26px">配信ごとの平均同接</div>
+      ${histAvg.length? histAvg.map((x,i)=>{
+        const prev = histAvg[i+1];
+        const val = x.avg!=null?x.avg:x.peak;
+        let t='<span class="trend flat">—</span>';
+        if(prev){
+          const pv = prev.avg!=null?prev.avg:prev.peak;
+          const d = val - pv;
+          const p = pv? Math.round(d/pv*100):0;
+          t = d>0?`<span class="trend up">▲ ${p}%</span>`:d<0?`<span class="trend down">▼ ${Math.abs(p)}%</span>`:'<span class="trend flat">±0</span>';
+        }
+        return `<div class="hrow">
+          <span class="d">${new Date(x.started_at).toLocaleString('ja-JP',{year:'2-digit',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</span>
+          ${t}
+          <span class="s">${x.avg!=null?`平均 ${fmt(x.avg)}`:`最高 ${fmt(x.peak)}`} ／ 総 ${fmt(x.total)}${x.archive?' <span style="color:var(--sub);font-weight:400">(過去)</span>':''}</span>
+        </div>`;
+      }).join('') : '<div class="empty">まだ配信記録がありません</div>'}
+    </div>`;
+
+  if(dChart){dChart.destroy();dChart=null;}
+  if(liveChart){liveChart.destroy();liveChart=null;}
+
+  const bs=broadcastsOf(s);
+  if(bs.length){
+    dChart=new Chart(document.getElementById('dc'),{
+      data:{
+        labels:bs.map(x=>mdLabel(x.t)+(x.live?'(配信中)':'')),
+        datasets:[
+          {type:'bar',label:'平均同接',data:bs.map(x=>x.avg),
+           backgroundColor:bs.map(x=>x.live?'#ff3b5c':'#5b8cff'),borderRadius:4,order:2},
+          {type:'line',label:'最高同接',data:bs.map(x=>x.peak),
+           borderColor:'#2ee6a8',backgroundColor:'transparent',borderWidth:2,
+           pointRadius:3,pointBackgroundColor:'#2ee6a8',tension:.25,order:1}
+        ]},
+      options:{responsive:true,maintainAspectRatio:false,animation:{duration:400},
+        interaction:{mode:'index',intersect:false},
+        plugins:{legend:{labels:{color:'#8b95ad',boxWidth:10,font:{size:11}}}},
+        scales:{
+          x:{ticks:{color:'#8b95ad',font:{size:10},maxTicksLimit:14},grid:{display:false}},
+          y:{beginAtZero:true,ticks:{color:'#8b95ad',font:{size:10}},grid:{color:'#1e2536'}}
+        }}
+    });
+  }
+
+  if(live && a.length>1){
+    const el=document.getElementById('dcLive');
+    if(el){
+      liveChart=new Chart(el,{
+        type:'line',
+        data:{labels:a.map(x=>new Date(x.timestamp).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'})),
+          datasets:[
+            {label:'同時接続',data:a.map(x=>x.concurrent),borderColor:'#ff3b5c',backgroundColor:'#ff3b5c22',
+             borderWidth:2,pointRadius:0,tension:.3,fill:true,yAxisID:'y'},
+            {label:'総来場者',data:a.map(x=>x.total),borderColor:'#5b8cff',backgroundColor:'transparent',
+             borderWidth:2,pointRadius:0,tension:.3,yAxisID:'y1'}
+          ]},
+        options:{responsive:true,maintainAspectRatio:false,animation:{duration:400},
+          interaction:{mode:'index',intersect:false},
+          plugins:{legend:{labels:{color:'#8b95ad',boxWidth:10,font:{size:11}}}},
+          scales:{
+            x:{ticks:{color:'#8b95ad',maxTicksLimit:8,font:{size:10}},grid:{color:'#1e2536'}},
+            y:{position:'left',beginAtZero:true,ticks:{color:'#ff3b5c',font:{size:10}},grid:{color:'#1e2536'}},
+            y1:{position:'right',beginAtZero:true,ticks:{color:'#5b8cff',font:{size:10}},grid:{display:false}}
+          }}
+      });
+      liveChart.$pulse=[0,1];
+    }
+  }
+}
+
+async function addBroadcaster(){
+  const el=document.getElementById('inp'), v=el.value.trim();
+  if(!v) return showErr('URLを入力してください');
+  try{
+    const r=await fetch(API+'/config/broadcasters',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({user_id:extractUserId(v)})});
+    const j=await r.json();
+    if(!r.ok) throw new Error(j.error||'追加できませんでした');
+    el.value=''; document.getElementById('err').innerHTML='';
+    await loadAll();
+  }catch(e){ showErr('追加エラー: '+e.message); }
+}
+
+async function removeBroadcaster(uid){
+  if(!confirm('削除しますか？（記録も消えます）')) return;
+  try{
+    await fetch(API+'/config/broadcasters/'+encodeURIComponent(uid),{method:'DELETE'});
+    if(openUid===uid) closeModal();
+    await loadAll();
+  }catch(e){ showErr('削除エラー: '+e.message); }
+}
+
+async function discover(){
+  showErr('配信中の上位を検索しています…');
+  try{
+    const r=await fetch(API+'/discover',{method:'POST'});
+    const j=await r.json();
+    if(!j.ok){ showErr('自動収集エラー: '+(j.reason||'unknown')); return; }
+    showErr(`${(j.added||[]).length} 人を自動追加（自動枠 ${j.auto_slots}）`);
+    await loadAll();
+  }catch(e){ showErr('自動収集エラー: '+e.message); }
+}
+
+async function backfill(){
+  if(!confirm('登録中の全配信者の過去配信を取り込みます。数十秒かかることがあります。')) return;
+  showErr('取り込み中…');
+  try{
+    const r=await fetch(API+'/backfill',{method:'POST'});
+    const j=await r.json();
+    const n=Object.values(j).reduce((t,x)=>t+(x.imported||0),0);
+    showErr(`${n} 件の過去配信を取り込みました`);
+    await loadAll();
+  }catch(e){ showErr('取込エラー: '+e.message); }
+}
+
+async function cleanupZeros(){
+  if(!confirm('同接0の不正サンプルを全削除します。よろしいですか？')) return;
+  try{
+    const r=await fetch(API+'/cleanup',{method:'POST'});
+    const j=await r.json();
+    showErr(`${j.removed} 件の0データを削除しました`);
+    await loadAll();
+  }catch(e){ showErr('削除エラー: '+e.message); }
+}
+
+function exportData(){
+  const blob=new Blob([JSON.stringify({config,stats},null,2)],{type:'application/json'});
+  const u=URL.createObjectURL(blob), a=document.createElement('a');
+  a.href=u; a.download=`twitcas-${new Date().toISOString().slice(0,10)}.json`; a.click();
+  URL.revokeObjectURL(u);
+}
+
+function showErr(m){
+  document.getElementById('err').innerHTML=`<div class="err">${esc(m)}</div>`;
+  setTimeout(()=>{const e=document.getElementById('err'); if(e)e.innerHTML='';},6000);
+}
+
+document.getElementById('inp').addEventListener('keydown',e=>{if(e.key==='Enter')addBroadcaster();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
+
+loadAll();
+setInterval(loadAll,5000);
+</script>
+</body>
+</html>
