@@ -64,10 +64,10 @@ async function bootstrap() {
   }
   console.log('[storage] supabase');
   try {
-    const bcs = await sb('GET', 'tw_broadcasters', { query: '?select=user_id,name,image&order=created_at.asc' });
+    const bcs = await sb('GET', 'tw_broadcasters', { query: '?select=user_id,name,image,pinned,auto,last_live_at,best_peak&order=created_at.asc' });
     config = { broadcasters: bcs || [] };
 
-    const brs = await sb('GET', 'tw_broadcasts', { query: '?select=id,user_id,started_at,ended_at&order=started_at.asc' });
+    const brs = await sb('GET', 'tw_broadcasts', { query: '?select=id,user_id,started_at,ended_at,peak,total,duration,source&order=started_at.asc' });
     const smp = await sb('GET', 'tw_samples', { query: '?select=broadcast_id,concurrent,total,ts&order=ts.asc&limit=100000' });
 
     const byBc = {};
@@ -89,6 +89,10 @@ async function bootstrap() {
         broadcast_id: b.id,
         started_at: b.started_at,
         ended_at: b.ended_at || undefined,
+        source: b.source || 'live',
+        peak: b.peak ?? null,
+        total_final: b.total ?? null,
+        duration: b.duration ?? null,
         samples: byBc[b.id] || []
       };
       if (b.ended_at) broadcasterStats[b.user_id].history.push(obj);
@@ -268,22 +272,170 @@ async function fetchBroadcastStats(userId) {
   return { concurrent: 0, total: 0, timestamp: new Date().toISOString() };
 }
 
+// ---------- 過去配信の取り込み ----------
+async function backfillUser(userId, maxMovies = 500) {
+  if (!USE_TC_API) return { ok: false, reason: 'no_credentials' };
+  let offset = 0, imported = 0, scanned = 0, totalCount = null;
+
+  while (scanned < maxMovies) {
+    let j;
+    try {
+      const r = await fetch(
+        `https://apiv2.twitcasting.tv/users/${encodeURIComponent(userId)}/movies?offset=${offset}&limit=50`,
+        { headers: { 'X-Api-Version': '2.0', Authorization: `Basic ${TC_BASIC}`, Accept: 'application/json' } }
+      );
+      if (!r.ok) return { ok: false, reason: `status_${r.status}`, imported };
+      j = await r.json();
+    } catch (e) { return { ok: false, reason: e.message, imported }; }
+
+    const movies = (j && j.movies) || [];
+    if (totalCount === null) totalCount = j.total_count ?? null;
+    if (!movies.length) break;
+
+    if (!broadcasterStats[userId]) broadcasterStats[userId] = { user_id: userId, current_broadcast: null, history: [] };
+
+    const rows = [];
+    for (const m of movies) {
+      scanned++;
+      if (m.is_live) continue;
+      const startedMs = Number(m.created) * 1000;
+      if (!startedMs) continue;
+      const dur = Number(m.duration || 0);
+      const peak = Number(m.max_view_count ?? 0);
+      const total = Number(m.total_view_count ?? m.current_view_count ?? 0);
+      if (!peak && !total) continue;
+
+      const id = `arc_${userId}_${m.id}`;
+      if (broadcasterStats[userId].history.some(h => h.broadcast_id === id)) continue;
+
+      const obj = {
+        broadcast_id: id,
+        started_at: new Date(startedMs).toISOString(),
+        ended_at: new Date(startedMs + dur * 1000).toISOString(),
+        source: 'archive',
+        peak, total_final: total, duration: dur,
+        samples: []
+      };
+      broadcasterStats[userId].history.push(obj);
+      rows.push({
+        id, user_id: userId,
+        started_at: obj.started_at, ended_at: obj.ended_at,
+        peak, total, duration: dur, source: 'archive'
+      });
+      imported++;
+    }
+
+    if (rows.length && USE_SB) {
+      try { await sb('POST', 'tw_broadcasts', { body: rows, prefer: 'resolution=merge-duplicates' }); }
+      catch (e) { console.error('backfill upsert:', e.message); }
+    }
+
+    offset += movies.length;
+    if (totalCount !== null && offset >= totalCount) break;
+  }
+
+  broadcasterStats[userId].history.sort((a, b) => new Date(a.started_at) - new Date(b.started_at));
+  if (!USE_SB) saveJson(STATS_FILE, broadcasterStats);
+  return { ok: true, imported, scanned };
+}
+
+// ---------- 自動収集（同接上位50人） ----------
+const AUTO_LIMIT = 50;
+
+async function discoverTopLives() {
+  if (!USE_TC_API) return { ok: false, reason: 'no_credentials' };
+  let movies = [];
+  try {
+    const r = await fetch('https://apiv2.twitcasting.tv/search/lives?limit=100&type=recommend&lang=ja', {
+      headers: { 'X-Api-Version': '2.0', Authorization: `Basic ${TC_BASIC}`, Accept: 'application/json' }
+    });
+    if (!r.ok) return { ok: false, reason: `status_${r.status}` };
+    const j = await r.json();
+    movies = (j && j.movies) || [];
+  } catch (e) { return { ok: false, reason: e.message }; }
+
+  const cands = movies
+    .map(x => ({
+      user_id: (x.broadcaster && x.broadcaster.screen_id) || null,
+      name: (x.broadcaster && x.broadcaster.name) || null,
+      image: (x.broadcaster && x.broadcaster.image) || null,
+      viewers: Number((x.movie && x.movie.current_view_count) || 0)
+    }))
+    .filter(c => c.user_id)
+    .sort((a, b) => b.viewers - a.viewers);
+
+  const known = new Set(config.broadcasters.map(b => b.user_id));
+  let autoCount = config.broadcasters.filter(b => b.auto).length;
+  const added = [];
+
+  for (const c of cands) {
+    if (autoCount >= AUTO_LIMIT) break;
+    if (known.has(c.user_id)) continue;
+
+    const b = {
+      user_id: c.user_id,
+      name: c.name || c.user_id,
+      image: (c.image || '').replace(/^http:/, 'https:').replace(/_normal\.(jpg|png)/, '_400x400.$1') || null,
+      pinned: false,
+      auto: true,
+      best_peak: c.viewers,
+      last_live_at: new Date().toISOString()
+    };
+    config.broadcasters.push(b);
+    broadcasterStats[b.user_id] = { user_id: b.user_id, current_broadcast: null, history: [] };
+    known.add(b.user_id);
+    autoCount++;
+    added.push({ user_id: b.user_id, name: b.name, viewers: c.viewers });
+    try { await persistBroadcasterAdd(b); } catch (e) { console.error('auto add:', e.message); }
+  }
+
+  if (!USE_SB) saveJson(CONFIG_FILE, config);
+  if (added.length) console.log(`[auto] ${added.length}人を自動追加 (auto枠 ${autoCount}/${AUTO_LIMIT})`);
+  return { ok: true, added, auto_slots: `${autoCount}/${AUTO_LIMIT}`, candidates: cands.length };
+}
+
+// 自動枠の整理: 配信実績が最も低い auto を削除して枠を空ける
+async function pruneAuto(keep = AUTO_LIMIT) {
+  const autos = config.broadcasters.filter(b => b.auto);
+  if (autos.length <= keep) return { removed: 0 };
+  autos.sort((a, b) => (a.best_peak || 0) - (b.best_peak || 0));
+  const drop = autos.slice(0, autos.length - keep);
+  for (const b of drop) {
+    config.broadcasters = config.broadcasters.filter(x => x.user_id !== b.user_id);
+    delete broadcasterStats[b.user_id];
+    try { await persistBroadcasterDelete(b.user_id); } catch (e) { console.error('prune:', e.message); }
+  }
+  if (!USE_SB) { saveJson(CONFIG_FILE, config); saveJson(STATS_FILE, broadcasterStats); }
+  return { removed: drop.length };
+}
+
 // ---------- 監視ループ ----------
 let monitoring = false;
+const offlineCheckedAt = {};   // user_id -> ms
+const OFFLINE_INTERVAL = 5 * 60 * 1000; // オフラインの人は5分に1回だけ確認
+
 async function monitorBroadcasters() {
   if (monitoring) return;
   if (!config.broadcasters || !config.broadcasters.length) return;
   monitoring = true;
+  const now = Date.now();
   try {
     for (const bc of config.broadcasters) {
       const uid = bc.user_id;
       if (!broadcasterStats[uid]) broadcasterStats[uid] = { user_id: uid, current_broadcast: null, history: [] };
 
+      const wasLive = !!broadcasterStats[uid].current_broadcast;
+      if (!wasLive) {
+        const last = offlineCheckedAt[uid] || 0;
+        if (now - last < OFFLINE_INTERVAL) continue;
+        offlineCheckedAt[uid] = now;
+      }
+
       const s = await fetchBroadcastStats(uid);
 
       if (s) {
-        if (!broadcasterStats[uid].current_broadcast) {
-          const b = { broadcast_id: `${uid}_${Date.now()}`, started_at: s.timestamp, samples: [s] };
+        if (!wasLive) {
+          const b = { broadcast_id: `${uid}_${Date.now()}`, started_at: s.timestamp, samples: [s], source: 'live' };
           broadcasterStats[uid].current_broadcast = b;
           console.log(`[${uid}] 配信開始 ${s.concurrent}/${s.total}`);
           try { await persistBroadcastStart(uid, b); await persistSample(uid, b.broadcast_id, s); }
@@ -294,18 +446,23 @@ async function monitorBroadcasters() {
           try { await persistSample(uid, b.broadcast_id, s); }
           catch (e) { console.error('persist sample:', e.message); }
         }
-        if (!USE_SB) saveJson(STATS_FILE, broadcasterStats);
-      } else {
-        if (broadcasterStats[uid].current_broadcast) {
-          const b = broadcasterStats[uid].current_broadcast;
-          b.ended_at = new Date().toISOString();
-          broadcasterStats[uid].history.push(b);
-          broadcasterStats[uid].current_broadcast = null;
-          console.log(`[${uid}] 配信終了 samples=${b.samples.length}`);
-          try { await persistBroadcastEnd(b.broadcast_id, b.ended_at); }
-          catch (e) { console.error('persist end:', e.message); }
-          if (!USE_SB) saveJson(STATS_FILE, broadcasterStats);
+        // 実績更新
+        if (s.concurrent > (bc.best_peak || 0)) {
+          bc.best_peak = s.concurrent;
+          bc.last_live_at = s.timestamp;
+          try { await persistBroadcasterAdd(bc); } catch (e) {}
         }
+        if (!USE_SB) saveJson(STATS_FILE, broadcasterStats);
+      } else if (wasLive) {
+        const b = broadcasterStats[uid].current_broadcast;
+        b.ended_at = new Date().toISOString();
+        broadcasterStats[uid].history.push(b);
+        broadcasterStats[uid].current_broadcast = null;
+        offlineCheckedAt[uid] = now;
+        console.log(`[${uid}] 配信終了 samples=${b.samples.length}`);
+        try { await persistBroadcastEnd(b.broadcast_id, b.ended_at); }
+        catch (e) { console.error('persist end:', e.message); }
+        if (!USE_SB) saveJson(STATS_FILE, broadcasterStats);
       }
     }
   } finally {
@@ -328,6 +485,7 @@ const server = http.createServer((req, res) => {
       ok: true,
       storage: USE_SB ? 'supabase' : 'local',
       official_api: USE_TC_API,
+      auto_slots: `${config.broadcasters.filter(b => b.auto).length}/${AUTO_LIMIT}`,
       broadcasters: config.broadcasters.length,
       live: config.broadcasters.filter(b => broadcasterStats[b.user_id]?.current_broadcast).length,
       time: new Date().toISOString()
@@ -346,6 +504,39 @@ const server = http.createServer((req, res) => {
       out.parsed = await fetchBroadcastStats(uid);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(out, null, 2));
+    })();
+    return;
+  }
+
+  // 自動収集を今すぐ実行: POST /api/discover
+  if (pathname === '/api/discover' && req.method === 'POST') {
+    (async () => {
+      const r = await discoverTopLives();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r, null, 2));
+    })();
+    return;
+  }
+
+  // 自動枠の整理: POST /api/prune
+  if (pathname === '/api/prune' && req.method === 'POST') {
+    (async () => {
+      const r = await pruneAuto();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r, null, 2));
+    })();
+    return;
+  }
+
+  // 過去配信の取り込み: POST /api/backfill  または /api/backfill/<user_id>
+  if (pathname.startsWith('/api/backfill') && req.method === 'POST') {
+    (async () => {
+      const spec = pathname.replace('/api/backfill', '').replace(/^\//, '');
+      const targets = spec ? [decodeURIComponent(spec)] : config.broadcasters.map(b => b.user_id);
+      const result = {};
+      for (const uid of targets) result[uid] = await backfillUser(uid);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result, null, 2));
     })();
     return;
   }
@@ -403,7 +594,7 @@ const server = http.createServer((req, res) => {
         const info = await fetchUserInfo(uid);
         if (!info) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: `ユーザーが見つかりません: ${uid}` })); return; }
 
-        const b = { user_id: uid, name: info.name, image: info.image };
+        const b = { user_id: uid, name: info.name, image: info.image, pinned: true, auto: false, best_peak: 0 };
         config.broadcasters.push(b);
         broadcasterStats[uid] = { user_id: uid, current_broadcast: null, history: [] };
         await persistBroadcasterAdd(b);
@@ -450,6 +641,8 @@ bootstrap().then(() => {
     console.log(`Twitcas Tracker on :${PORT} / storage=${USE_SB ? 'supabase' : 'local'} / officialAPI=${USE_TC_API} / broadcasters=${config.broadcasters.length}`);
   });
   refreshAllUserInfo();
+  discoverTopLives();
+  setInterval(discoverTopLives, 5 * 60 * 1000);
   setInterval(refreshAllUserInfo, 6 * 60 * 60 * 1000);
   setInterval(monitorBroadcasters, 15000);
   monitorBroadcasters();
