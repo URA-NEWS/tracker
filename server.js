@@ -350,6 +350,33 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // 0サンプル一括削除: POST /api/cleanup
+  if (pathname === '/api/cleanup' && req.method === 'POST') {
+    (async () => {
+      let removed = 0;
+      const strip = (arr) => {
+        const before = arr.length;
+        const out = arr.filter(x => !(Number(x.concurrent) === 0 && Number(x.total) === 0));
+        removed += before - out.length;
+        return out;
+      };
+      for (const uid of Object.keys(broadcasterStats)) {
+        const st = broadcasterStats[uid];
+        if (st.current_broadcast) st.current_broadcast.samples = strip(st.current_broadcast.samples || []);
+        st.history = (st.history || []).map(b => ({ ...b, samples: strip(b.samples || []) }));
+      }
+      if (USE_SB) {
+        try { await sb('DELETE', 'tw_samples', { query: '?concurrent=eq.0&total=eq.0' }); }
+        catch (e) { console.error('cleanup:', e.message); }
+      } else {
+        saveJson(STATS_FILE, broadcasterStats);
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ removed }));
+    })();
+    return;
+  }
+
   if (pathname === '/api/twitcas/stats' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(broadcasterStats));
