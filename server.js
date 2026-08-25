@@ -11,6 +11,12 @@ const SB_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
 const SB_KEY = process.env.SUPABASE_SERVICE_KEY || '';
 const USE_SB = !!(SB_URL && SB_KEY);
 
+// ツイキャス公式API（アプリケーションのみアクセス / Basic認証）
+const TC_ID = process.env.TWITCASTING_CLIENT_ID || '';
+const TC_SECRET = process.env.TWITCASTING_CLIENT_SECRET || '';
+const TC_BASIC = (TC_ID && TC_SECRET) ? Buffer.from(`${TC_ID}:${TC_SECRET}`).toString('base64') : '';
+const USE_TC_API = !!TC_BASIC;
+
 const CONFIG_FILE = path.join(__dirname, 'config.json');
 const STATS_FILE  = path.join(__dirname, 'stats.json');
 
@@ -130,6 +136,24 @@ async function persistSample(uid, bid, s) {
 
 // ---------- ツイキャス: 名前・アイコン ----------
 async function fetchUserInfo(userId) {
+  // 公式APIが使える場合はそちらを優先（正確な配信者名・アイコン）
+  if (USE_TC_API) {
+    try {
+      const r = await fetch(`https://apiv2.twitcasting.tv/users/${encodeURIComponent(userId)}`, {
+        headers: { 'X-Api-Version': '2.0', Authorization: `Basic ${TC_BASIC}`, Accept: 'application/json' }
+      });
+      if (r.ok) {
+        const j = await r.json();
+        if (j && j.user) {
+          return {
+            name: j.user.name || j.user.screen_id || userId,
+            image: (j.user.image || '').replace(/^http:/, 'https:').replace(/_normal\.(jpg|png)/, '_400x400.$1') || null
+          };
+        }
+      }
+      if (r.status === 404) return null;
+    } catch (e) { /* HTMLへフォールバック */ }
+  }
   try {
     const res = await fetch(`https://twitcasting.tv/${encodeURIComponent(userId)}`, { headers: { 'User-Agent': UA, 'Accept-Language': 'ja' } });
     if (!res.ok) return null;
@@ -201,89 +225,47 @@ async function fetchLiveInfo(userId) {
   }
 }
 
-// 2) 視聴数を取得（複数経路をフォールバック）
-async function fetchViewCounts(userId, movieId) {
-  // 2-a) 公式風JSON（movie_id 指定）
-  if (movieId) {
-    try {
-      const r = await fetch(`https://frontendapi.twitcasting.tv/movies/${movieId}/status/viewer`, {
-        headers: { 'User-Agent': UA, Accept: 'application/json' }
-      });
-      if (r.ok) {
-        const j = await r.json();
-        const c = j?.viewers?.current ?? j?.current_view_count ?? j?.current;
-        const t = j?.viewers?.total ?? j?.total_view_count ?? j?.total;
-        if (c != null && t != null) return { concurrent: Number(c), total: Number(t), src: 'viewerapi' };
-      }
-    } catch (e) { /* next */ }
-  }
-
-  // 2-b) 配信ページHTMLから抽出
-  const pageUrl = movieId
-    ? `https://twitcasting.tv/${encodeURIComponent(userId)}/movie/${movieId}`
-    : `https://twitcasting.tv/${encodeURIComponent(userId)}`;
+// 2) 公式API（apiv2）で現在の配信情報を取得
+async function fetchCurrentLiveApi(userId) {
+  if (!USE_TC_API) return { ok: false, reason: 'no_credentials' };
   try {
-    const r = await fetch(pageUrl, { headers: { 'User-Agent': UA, 'Accept-Language': 'ja' } });
-    if (r.ok) {
-      const h = await r.text();
-      const got = parseCountsFromHtml(h);
-      if (got) return { ...got, src: 'html' };
-    }
-  } catch (e) { /* next */ }
-
-  // 2-c) プロフィールページHTML
-  if (movieId) {
-    try {
-      const r = await fetch(`https://twitcasting.tv/${encodeURIComponent(userId)}`, {
-        headers: { 'User-Agent': UA, 'Accept-Language': 'ja' }
-      });
-      if (r.ok) {
-        const got = parseCountsFromHtml(await r.text());
-        if (got) return { ...got, src: 'profile-html' };
+    const r = await fetch(`https://apiv2.twitcasting.tv/users/${encodeURIComponent(userId)}/current_live`, {
+      headers: {
+        'X-Api-Version': '2.0',
+        Authorization: `Basic ${TC_BASIC}`,
+        Accept: 'application/json'
       }
-    } catch (e) { /* give up */ }
+    });
+    if (r.status === 404) return { ok: true, live: false };
+    if (!r.ok) return { ok: false, reason: `status_${r.status}`, body: (await r.text()).slice(0, 300) };
+    const j = await r.json();
+    const m = j && j.movie;
+    if (!m || !m.is_live) return { ok: true, live: false };
+    return {
+      ok: true,
+      live: true,
+      movie_id: String(m.id),
+      concurrent: Number(m.current_view_count ?? 0),
+      total: Number(m.total_view_count ?? 0),
+      broadcaster: j.broadcaster || null
+    };
+  } catch (e) {
+    return { ok: false, reason: e.message };
   }
-  return null;
-}
-
-function parseCountsFromHtml(h) {
-  let c = null, t = null;
-
-  let m = h.match(/"current_view_count"\s*:\s*"?(\d+)"?/);
-  if (m) c = parseInt(m[1], 10);
-  m = h.match(/"total_view_count"\s*:\s*"?(\d+)"?/);
-  if (m) t = parseInt(m[1], 10);
-  if (c != null && t != null) return { concurrent: c, total: t };
-
-  m = h.match(/data-viewer-count=["'](\d+)["']/);
-  if (m) c = parseInt(m[1], 10);
-  m = h.match(/data-total-viewer-count=["'](\d+)["']/);
-  if (m) t = parseInt(m[1], 10);
-  if (c != null && t != null) return { concurrent: c, total: t };
-
-  // タグを除去したテキストから「856 / 1251」を拾う
-  const txt = h
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\s+/g, ' ');
-
-  const re = /(?<![\d:.])(\d{1,7})\s*\/\s*(\d{1,7})(?![\d:.])/g;
-  let mm;
-  while ((mm = re.exec(txt))) {
-    const a = parseInt(mm[1], 10), b = parseInt(mm[2], 10);
-    if (b >= a && b > 0 && b < 10000000) return { concurrent: a, total: b };
-  }
-  return null;
 }
 
 async function fetchBroadcastStats(userId) {
+  // 公式APIが使えるならそれが最も正確
+  const api = await fetchCurrentLiveApi(userId);
+  if (api.ok) {
+    if (!api.live) return null;
+    return { concurrent: api.concurrent, total: api.total, timestamp: new Date().toISOString() };
+  }
+
+  // フォールバック: 配信中かどうかだけ判定（視聴数は0）
   const info = await fetchLiveInfo(userId);
   if (!info.live) return null;
-  const v = await fetchViewCounts(userId, info.movie_id);
-  if (!v) return { concurrent: 0, total: 0, timestamp: new Date().toISOString() };
-  return { concurrent: v.concurrent, total: v.total, timestamp: new Date().toISOString() };
+  return { concurrent: 0, total: 0, timestamp: new Date().toISOString() };
 }
 
 // ---------- 監視ループ ----------
@@ -345,6 +327,7 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({
       ok: true,
       storage: USE_SB ? 'supabase' : 'local',
+      official_api: USE_TC_API,
       broadcasters: config.broadcasters.length,
       live: config.broadcasters.filter(b => broadcasterStats[b.user_id]?.current_broadcast).length,
       time: new Date().toISOString()
@@ -357,39 +340,9 @@ const server = http.createServer((req, res) => {
   if (pathname.startsWith('/api/debug/')) {
     (async () => {
       const uid = decodeURIComponent(pathname.replace('/api/debug/', ''));
-      const out = { user_id: uid };
-      out.liveInfo = await fetchLiveInfo(uid);
-      if (out.liveInfo.movie_id) {
-        try {
-          const r = await fetch(`https://frontendapi.twitcasting.tv/movies/${out.liveInfo.movie_id}/status/viewer`, {
-            headers: { 'User-Agent': UA, Accept: 'application/json' }
-          });
-          out.viewerapi_status = r.status;
-          out.viewerapi_body = (await r.text()).slice(0, 600);
-        } catch (e) { out.viewerapi_error = e.message; }
-
-        try {
-          const r2 = await fetch(`https://twitcasting.tv/${encodeURIComponent(uid)}/movie/${out.liveInfo.movie_id}`, {
-            headers: { 'User-Agent': UA, 'Accept-Language': 'ja' }
-          });
-          const h = await r2.text();
-          out.movie_page_status = r2.status;
-          out.movie_page_len = h.length;
-          out.parsed_from_movie_page = parseCountsFromHtml(h);
-          const txt = h
-            .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-            .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-            .replace(/<[^>]+>/g, ' ')
-            .replace(/&nbsp;/g, ' ')
-            .replace(/\s+/g, ' ');
-          const hits = [];
-          const re2 = /.{0,50}\d{1,7}\s*\/\s*\d{1,7}.{0,50}/g;
-          let mm2, n2 = 0;
-          while ((mm2 = re2.exec(txt)) && n2 < 10) { hits.push(mm2[0]); n2++; }
-          out.slash_snippets = hits;
-          out.text_len = txt.length;
-        } catch (e) { out.movie_page_error = e.message; }
-      }
+      const out = { user_id: uid, official_api_enabled: USE_TC_API };
+      out.currentLiveApi = await fetchCurrentLiveApi(uid);
+      out.streamserver = await fetchLiveInfo(uid);
       out.parsed = await fetchBroadcastStats(uid);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(out, null, 2));
@@ -467,7 +420,7 @@ const server = http.createServer((req, res) => {
 // ---------- 起動 ----------
 bootstrap().then(() => {
   server.listen(PORT, () => {
-    console.log(`Twitcas Tracker on :${PORT} / storage=${USE_SB ? 'supabase' : 'local'} / broadcasters=${config.broadcasters.length}`);
+    console.log(`Twitcas Tracker on :${PORT} / storage=${USE_SB ? 'supabase' : 'local'} / officialAPI=${USE_TC_API} / broadcasters=${config.broadcasters.length}`);
   });
   refreshAllUserInfo();
   setInterval(refreshAllUserInfo, 6 * 60 * 60 * 1000);
