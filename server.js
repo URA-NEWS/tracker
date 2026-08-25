@@ -276,6 +276,24 @@ async function fetchBroadcastStats(userId) {
 // ---------- 過去配信の取り込み ----------
 const backfillJob = { running: false, done: 0, totalTargets: 0, imported: 0, current: null, finishedAt: null, error: null };
 
+function findMissingArchive() {
+  return config.broadcasters
+    .filter(b => {
+      const st = broadcasterStats[b.user_id];
+      if (!st) return true;
+      return !(st.history || []).some(h => h.source === 'archive');
+    })
+    .map(b => b.user_id);
+}
+
+async function autoBackfillMissing() {
+  if (backfillJob.running) return;
+  const targets = findMissingArchive();
+  if (!targets.length) return;
+  console.log(`[backfill] 未取込 ${targets.length}人を自動補完`);
+  await runBackfillJob(targets);
+}
+
 async function runBackfillJob(targets) {
   if (backfillJob.running) return;
   backfillJob.running = true;
@@ -455,7 +473,7 @@ async function discoverTopLives() {
 
   // 新しく追加した配信者は過去配信を自動で取り込む（バックグラウンド）
   if (newlyAdded.length && !backfillJob.running) {
-    runBackfillJob(newlyAdded);
+    runBackfillJob(newlyAdded).then(() => autoBackfillMissing());
   }
 
   const act = activeAutos().length;
@@ -679,13 +697,7 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify({ started: false, reason: 'already_running', job: backfillJob }));
         return;
       }
-      const targets = config.broadcasters
-        .filter(b => {
-          const st = broadcasterStats[b.user_id];
-          if (!st) return true;
-          return !(st.history || []).some(h => h.source === 'archive');
-        })
-        .map(b => b.user_id);
+      const targets = findMissingArchive();
       if (!targets.length) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ started: false, reason: 'nothing_to_do' }));
@@ -823,6 +835,8 @@ bootstrap().then(() => {
   refreshAllUserInfo();
   discoverTopLives();
   setInterval(discoverTopLives, 5 * 60 * 1000);
+  setTimeout(autoBackfillMissing, 30 * 1000);
+  setInterval(autoBackfillMissing, 30 * 60 * 1000);
   setInterval(refreshAllUserInfo, 6 * 60 * 60 * 1000);
   setInterval(monitorBroadcasters, 15000);
   monitorBroadcasters();
