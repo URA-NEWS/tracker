@@ -388,7 +388,7 @@ async function discoverTopLives() {
     .sort((a, b) => b.viewers - a.viewers);
 
   const byId = new Map(config.broadcasters.map(b => [b.user_id, b]));
-  const added = [], revived = [], slept = [];
+  const added = [], revived = [], slept = [], newlyAdded = [];
   const now = new Date().toISOString();
 
   // 実力スコア = これまでの最高同接（今回の値で更新）
@@ -448,9 +448,16 @@ async function discoverTopLives() {
     if (!broadcasterStats[b.user_id]) broadcasterStats[b.user_id] = { user_id: b.user_id, current_broadcast: null, history: [] };
     added.push({ user_id: b.user_id, name: b.name, viewers: c.viewers });
     try { await persistBroadcasterAdd(b); } catch (e) { console.error('auto add:', e.message); }
+    newlyAdded.push(b.user_id);
   }
 
   if (!USE_SB) saveJson(CONFIG_FILE, config);
+
+  // 新しく追加した配信者は過去配信を自動で取り込む（バックグラウンド）
+  if (newlyAdded.length && !backfillJob.running) {
+    runBackfillJob(newlyAdded);
+  }
+
   const act = activeAutos().length;
   if (added.length || slept.length || revived.length) {
     console.log(`[auto] +${added.length} 休止${slept.length} 復帰${revived.length} (稼働 ${act}/${AUTO_LIMIT})`);
@@ -664,6 +671,33 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // 未取込の配信者だけ取り込む: POST /api/backfill-missing
+  if (pathname === '/api/backfill-missing' && req.method === 'POST') {
+    (async () => {
+      if (backfillJob.running) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ started: false, reason: 'already_running', job: backfillJob }));
+        return;
+      }
+      const targets = config.broadcasters
+        .filter(b => {
+          const st = broadcasterStats[b.user_id];
+          if (!st) return true;
+          return !(st.history || []).some(h => h.source === 'archive');
+        })
+        .map(b => b.user_id);
+      if (!targets.length) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ started: false, reason: 'nothing_to_do' }));
+        return;
+      }
+      runBackfillJob(targets);
+      res.writeHead(202, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ started: true, targets: targets.length }));
+    })();
+    return;
+  }
+
   // 取り込み状況: GET /api/backfill/status
   if (pathname === '/api/backfill/status' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -745,6 +779,7 @@ const server = http.createServer((req, res) => {
         await persistBroadcasterAdd(b);
 
         monitorBroadcasters();
+        if (!backfillJob.running) runBackfillJob([uid]);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(b));
       } catch (e) {
