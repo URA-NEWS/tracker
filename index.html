@@ -234,13 +234,17 @@ const dayJp=d=>{const x=new Date(d+'T00:00:00+09:00');
   return `${x.getMonth()+1}/${x.getDate()}(${'日月火水木金土'[x.getDay()]})`;};
 
 /* グラフ共通 */
-function gradFill(color){return ctx=>{const{chart}=ctx,{ctx:c,chartArea}=chart;
-  if(!chartArea)return withAlpha(color,.10);
+function gradFill(color,strong){return ctx=>{const{chart}=ctx,{ctx:c,chartArea}=chart;
+  if(!chartArea)return withAlpha(color,.22);
   const g=c.createLinearGradient(0,chartArea.top,0,chartArea.bottom);
-  g.addColorStop(0,withAlpha(color,.34));g.addColorStop(.6,withAlpha(color,.07));
-  g.addColorStop(1,withAlpha(color,0));return g;};}
+  const a=strong?1:.78;
+  g.addColorStop(0,withAlpha(color,.62*a));
+  g.addColorStop(.35,withAlpha(color,.30*a));
+  g.addColorStop(.72,withAlpha(color,.11*a));
+  g.addColorStop(1,withAlpha(color,.02*a));
+  return g;};}
 function lineStyle(color,{fill=true,dash=null}={}){
-  return{borderColor:color,backgroundColor:fill?gradFill(color):'transparent',fill:fill?'origin':false,
+  return{borderColor:color,backgroundColor:fill?gradFill(color,true):'transparent',fill:fill?'origin':false,
     borderWidth:2.4,borderDash:dash||[],tension:.36,cubicInterpolationMode:'monotone',
     pointRadius:4.5,pointHoverRadius:8,pointBackgroundColor:'#0b0e14',pointBorderColor:color,
     pointBorderWidth:2.2,pointHoverBorderWidth:3,pointHitRadius:16};}
@@ -387,7 +391,8 @@ function renderOverall(){
     data:{labels:rows.map(r=>r.day),datasets:[
       {label:`平均同接（${win}日移動平均）`,data:avgMA,...lineStyle('#5b8cff'),
        borderWidth:3,pointRadius:many?0:4,pointHoverRadius:7,yAxisID:'y',order:1},
-      {label:`総来場者（${win}日移動平均）`,data:totMA,...lineStyle('#2ee6a8',{fill:false}),
+      {label:`総来場者（${win}日移動平均）`,data:totMA,...lineStyle('#2ee6a8'),
+       backgroundColor:gradFill('#2ee6a8',false),
        borderWidth:2.6,pointRadius:many?0:4,pointHoverRadius:7,yAxisID:'y1',order:2}
     ]},
     options:{responsive:true,maintainAspectRatio:false,...NOANIM,
