@@ -552,6 +552,60 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // 全体の日別サマリー: GET /api/overall
+  if (pathname === '/api/overall' && req.method === 'GET') {
+    (async () => {
+      try {
+        if (USE_SB) {
+          const rows = await sb('GET', 'tw_daily_overall', { query: '?select=*&order=day.asc' });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(rows || []));
+          return;
+        }
+        // ローカル時はメモリから集計
+        const byDay = {};
+        for (const uid of Object.keys(broadcasterStats)) {
+          const st = broadcasterStats[uid];
+          const list = [...(st.history || [])];
+          if (st.current_broadcast) list.push(st.current_broadcast);
+          for (const b of list) {
+            const sm = (b.samples || []).filter(x => x.concurrent > 0);
+            let avg = null, peak = null, total = null;
+            if (sm.length) {
+              avg = Math.round(sm.reduce((t, x) => t + x.concurrent, 0) / sm.length);
+              peak = Math.max(...sm.map(x => x.concurrent));
+              total = sm[sm.length - 1].total;
+            } else if (b.source === 'archive') {
+              avg = b.peak; peak = b.peak; total = b.total_final;
+            }
+            if (avg == null) continue;
+            const d = new Date(b.started_at);
+            const key = new Date(d.getTime() + 9 * 3600e3).toISOString().slice(0, 10);
+            (byDay[key] = byDay[key] || []).push({ uid, avg, peak, total });
+          }
+        }
+        const out = Object.keys(byDay).sort().map(day => {
+          const a = byDay[day];
+          return {
+            day,
+            broadcasts: a.length,
+            broadcasters: new Set(a.map(x => x.uid)).size,
+            overall_avg: Math.round(a.reduce((t, x) => t + x.avg, 0) / a.length),
+            overall_avg_peak: Math.round(a.reduce((t, x) => t + (x.peak || 0), 0) / a.length),
+            overall_total_viewers: a.reduce((t, x) => t + (x.total || 0), 0),
+            day_max_peak: Math.max(...a.map(x => x.peak || 0))
+          };
+        });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(out));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    })();
+    return;
+  }
+
   // 自動収集を今すぐ実行: POST /api/discover
   if (pathname === '/api/discover' && req.method === 'POST') {
     (async () => {
