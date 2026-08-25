@@ -3,152 +3,126 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ツイキャス配信者トラッカー</title>
+<title>ツイキャス全体トラッカー</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{
-  --bg:#0b0e14; --panel:#141926; --panel2:#1b2233; --line:#252d40;
-  --txt:#e6ebf5; --sub:#8b95ad; --accent:#5b8cff; --live:#ff3b5c;
-  --ok:#2ee6a8; --warn:#ffb340;
-}
+:root{--bg:#0b0e14;--panel:#141926;--panel2:#1b2233;--line:#252d40;
+  --txt:#e6ebf5;--sub:#8b95ad;--accent:#5b8cff;--live:#ff3b5c;--ok:#2ee6a8;--warn:#ffb340}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
   background:var(--bg);color:var(--txt);min-height:100vh}
 body::before{content:"";position:fixed;inset:0;pointer-events:none;
-  background:radial-gradient(900px 500px at 15% -10%,rgba(91,140,255,.12),transparent 60%),
-             radial-gradient(700px 400px at 90% 0%,rgba(255,59,92,.07),transparent 60%)}
-.wrap{position:relative;max-width:1440px;margin:0 auto;padding:26px 22px 70px}
+  background:radial-gradient(900px 500px at 15% -10%,rgba(91,140,255,.12),transparent 60%)}
+.wrap{position:relative;max-width:1320px;margin:0 auto;padding:26px 22px 70px}
 
-.hd{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:22px}
-.hd h1{font-size:19px;font-weight:800;letter-spacing:.02em}
-.hd .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 12px var(--ok);animation:pulse 2s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-.hd .meta{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:12px;color:var(--sub);flex-wrap:wrap}
+.hd{display:flex;align-items:center;gap:13px;flex-wrap:wrap;margin-bottom:24px}
+.hd h1{font-size:19px;font-weight:800}
+.hd .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 12px var(--ok);animation:pl 2s infinite}
+@keyframes pl{0%,100%{opacity:1}50%{opacity:.3}}
+.hd .meta{margin-left:auto;display:flex;align-items:center;gap:9px;font-size:12px;color:var(--sub);flex-wrap:wrap}
 .chip{background:var(--panel);border:1px solid var(--line);padding:6px 12px;border-radius:999px;font-size:12px;color:var(--sub)}
-
-.addbar{display:flex;gap:10px;margin-bottom:24px;flex-wrap:wrap}
-.addbar input{flex:1;min-width:240px;background:var(--panel);border:1px solid var(--line);
-  color:var(--txt);padding:12px 16px;border-radius:12px;font-size:14px;outline:none;transition:.2s}
-.addbar input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(91,140,255,.15)}
-.addbar input::placeholder{color:#5a6480}
-.btn{background:var(--accent);color:#fff;border:0;padding:11px 20px;border-radius:11px;
+.btn{background:var(--accent);color:#fff;border:0;padding:10px 18px;border-radius:11px;
   font-size:13px;font-weight:700;cursor:pointer;transition:.18s;white-space:nowrap}
 .btn:hover{filter:brightness(1.12)}
 .btn.ghost{background:var(--panel);color:var(--sub);border:1px solid var(--line)}
 .btn.ghost:hover{color:var(--txt);border-color:#3a4665}
 .err{background:rgba(91,140,255,.10);border:1px solid rgba(91,140,255,.3);color:#a9c2ff;
-  padding:11px 15px;border-radius:11px;margin-bottom:18px;font-size:13px}
+  padding:11px 15px;border-radius:11px;margin-bottom:16px;font-size:13px}
 
-.sect{font-size:12px;font-weight:800;color:var(--sub);letter-spacing:.1em;margin:0 0 12px}
-.sect .sub{font-weight:500;letter-spacing:0;color:#5f6a83;margin-left:10px}
-
-.panel{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:20px;margin-bottom:30px}
-.ctrl{display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
-.seg{display:flex;background:var(--panel2);border:1px solid var(--line);border-radius:10px;overflow:hidden}
-.seg button{background:transparent;border:0;color:var(--sub);padding:7px 14px;font-size:12px;
-  font-weight:700;cursor:pointer;transition:.15s}
+/* ===== 全体（主役） ===== */
+.hero{background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:24px;margin-bottom:16px}
+.heroTop{display:flex;align-items:flex-end;gap:24px;flex-wrap:wrap;margin-bottom:20px}
+.bigv{font-size:52px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.bigl{font-size:11px;color:var(--sub);letter-spacing:.1em;font-weight:700;margin-bottom:10px}
+.deltas{display:flex;gap:10px;flex-wrap:wrap;margin-left:auto}
+.dl{background:var(--panel2);border-radius:12px;padding:10px 14px;min-width:112px}
+.dl .l{font-size:9.5px;color:var(--sub);letter-spacing:.05em;margin-bottom:5px}
+.dl .v{font-size:17px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+.up{color:var(--ok)}.down{color:var(--live)}.flat{color:var(--sub)}
+.seg{display:inline-flex;background:var(--panel2);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.seg button{background:transparent;border:0;color:var(--sub);padding:7px 15px;font-size:12px;font-weight:700;cursor:pointer}
 .seg button.on{background:var(--accent);color:#fff}
-.chartrow{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-@media(max-width:960px){.chartrow{grid-template-columns:1fr}}
-.cbox{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:16px}
-.cbox h3{font-size:12.5px;font-weight:700;margin-bottom:4px;color:var(--txt)}
-.cbox canvas{height:280px!important}
+.ctrl{display:flex;gap:9px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+#overall{height:340px!important}
+.note{font-size:11.5px;color:#5f6a83;margin-top:12px}
 
-/* トレンドスキャン */
-.scan{display:flex;flex-direction:column;gap:1px;background:var(--line);border-radius:12px;overflow:hidden}
-.scanhd,.scanrow{display:grid;grid-template-columns:28px 42px minmax(120px,1.6fr) 96px 84px 84px 90px;
-  gap:10px;align-items:center;background:var(--panel);padding:10px 14px}
-.scanhd{background:var(--panel2);font-size:10.5px;color:var(--sub);letter-spacing:.06em;font-weight:700}
-.scanrow{cursor:pointer;transition:.15s}
-.scanrow:hover{background:#1a2132}
-.scanrow .rk{font-size:12px;color:#5f6a83;font-weight:700;text-align:center}
-.scanrow img{width:34px;height:34px;border-radius:10px;object-fit:cover;background:var(--panel2)}
-.scanrow .nm2{font-size:13px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.scanrow .u2{font-size:10.5px;color:#5f6a83;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.scanrow .v2{font-size:15px;font-weight:800;font-variant-numeric:tabular-nums;text-align:right}
-.scanrow .v2 small{display:block;font-size:9.5px;color:#5f6a83;font-weight:600;letter-spacing:.04em;margin-top:2px}
-.pct{font-size:13px;font-weight:800;text-align:right;font-variant-numeric:tabular-nums}
-.pct.up{color:var(--ok)} .pct.down{color:var(--live)} .pct.flat{color:var(--sub)}
-@media(max-width:820px){
-  .scanhd,.scanrow{grid-template-columns:24px 34px 1fr 70px 70px;}
-  .scanhd span:nth-child(6),.scanhd span:nth-child(7),
-  .scanrow .hidesm{display:none}
-}
-.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
-.sm{background:var(--panel2);border-radius:12px;padding:13px 15px}
-.sm .l{font-size:10px;color:var(--sub);letter-spacing:.05em;margin-bottom:6px}
-.sm .v{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+.stats3{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:34px}
+.st{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:15px 17px}
+.st .l{font-size:10px;color:var(--sub);letter-spacing:.05em;margin-bottom:7px}
+.st .v{font-size:23px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
 
-/* カード */
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;
-  cursor:pointer;transition:.2s;position:relative;overflow:hidden}
-.card:hover{transform:translateY(-2px);border-color:#3a4665;box-shadow:0 12px 30px rgba(0,0,0,.45)}
-.card.live{border-color:rgba(255,59,92,.42)}
-.card .top{display:flex;align-items:center;gap:11px;margin-bottom:13px;padding-right:64px}
-.avatar{width:44px;height:44px;border-radius:13px;object-fit:cover;background:var(--panel2);flex:0 0 44px}
-.nm{font-size:14px;font-weight:700;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.uid{font-size:10.5px;color:var(--sub);margin-top:3px;display:flex;align-items:center;gap:5px;
-  overflow:hidden;white-space:nowrap}
-.tag{font-size:9px;font-weight:700;letter-spacing:.05em;padding:2px 6px;border-radius:5px;
-  background:var(--panel2);color:var(--sub);border:1px solid var(--line);flex:0 0 auto}
+.sect{font-size:12px;font-weight:800;color:var(--sub);letter-spacing:.1em;margin:0 0 12px;
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.sect .sub{font-weight:500;letter-spacing:0;color:#5f6a83}
+.sect .sp{margin-left:auto}
+
+.addbar{display:flex;gap:9px;margin-bottom:14px;flex-wrap:wrap}
+.addbar input{flex:1;min-width:220px;background:var(--panel);border:1px solid var(--line);
+  color:var(--txt);padding:11px 15px;border-radius:11px;font-size:13.5px;outline:none}
+.addbar input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(91,140,255,.15)}
+.addbar input::placeholder{color:#5a6480}
+
+/* ===== 個別リスト（表のみ） ===== */
+.tbl{background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+.thd,.trow{display:grid;grid-template-columns:30px 38px minmax(140px,1.8fr) 92px 92px 92px 84px 60px;
+  gap:10px;align-items:center;padding:10px 14px}
+.thd{background:var(--panel2);font-size:10px;color:var(--sub);letter-spacing:.06em;font-weight:800}
+.trow{border-top:1px solid var(--line);cursor:pointer;transition:.14s}
+.trow:hover{background:#1a2132}
+.trow.dormant{opacity:.42}
+.rk{font-size:12px;color:#5f6a83;font-weight:700;text-align:center}
+.trow img{width:32px;height:32px;border-radius:9px;object-fit:cover;background:var(--panel2)}
+.nm{font-size:13px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.u2{font-size:10px;color:#5f6a83;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  display:flex;gap:5px;align-items:center}
+.tag{font-size:8.5px;font-weight:700;padding:1px 5px;border-radius:4px;background:var(--panel2);
+  color:var(--sub);border:1px solid var(--line);flex:0 0 auto}
 .tag.pin{background:rgba(91,140,255,.18);color:var(--accent);border-color:transparent}
 .tag.dor{background:rgba(255,179,64,.16);color:var(--warn);border-color:transparent}
-.card.dormant{opacity:.5}
-.card.dormant:hover{opacity:1}
-.badge{position:absolute;top:13px;right:13px;font-size:9.5px;font-weight:800;letter-spacing:.06em;
-  padding:4px 8px;border-radius:999px;background:var(--panel2);color:var(--sub);border:1px solid var(--line)}
-.badge.on{background:var(--live);color:#fff;border-color:transparent}
-.nums{display:grid;grid-template-columns:1fr 1fr;gap:9px}
-.num{background:var(--panel2);border-radius:11px;padding:10px 11px}
-.num .l{font-size:9.5px;color:var(--sub);letter-spacing:.05em;margin-bottom:5px}
-.num .v{font-size:20px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
-.num .v.hl{color:var(--live)}
-.spark{margin-top:11px;height:34px}
-.acts{position:absolute;bottom:13px;right:13px;display:flex;gap:4px;opacity:0;transition:.18s}
-.card:hover .acts{opacity:1}
+.tag.live{background:var(--live);color:#fff;border-color:transparent}
+.v2{font-size:14.5px;font-weight:800;font-variant-numeric:tabular-nums;text-align:right}
+.v2 small{display:block;font-size:9px;color:#5f6a83;font-weight:600;margin-top:2px}
+.pct{font-size:13px;font-weight:800;text-align:right;font-variant-numeric:tabular-nums}
+.acts2{display:flex;gap:4px;justify-content:flex-end}
 .iconbtn{background:var(--panel2);border:1px solid var(--line);color:var(--sub);
-  width:26px;height:26px;border-radius:8px;font-size:12px;cursor:pointer;line-height:1;
+  width:24px;height:24px;border-radius:7px;font-size:11px;cursor:pointer;line-height:1;
   display:flex;align-items:center;justify-content:center;text-decoration:none}
 .iconbtn:hover{color:var(--txt);border-color:#3a4665}
-.iconbtn.d:hover{color:var(--live);border-color:rgba(255,59,92,.5)}
-.empty{grid-column:1/-1;text-align:center;padding:44px 20px;color:var(--sub);font-size:13.5px;
-  border:1px dashed var(--line);border-radius:16px}
+.iconbtn.d:hover{color:var(--live)}
+@media(max-width:900px){
+  .thd,.trow{grid-template-columns:26px 32px 1fr 76px 66px}
+  .hidesm{display:none}
+}
+.empty{text-align:center;padding:44px 20px;color:var(--sub);font-size:13.5px}
 
-/* モーダル */
-.mask{position:fixed;inset:0;background:rgba(5,7,12,.8);backdrop-filter:blur(6px);
+/* ===== モーダル ===== */
+.mask{position:fixed;inset:0;background:rgba(5,7,12,.82);backdrop-filter:blur(6px);
   display:none;align-items:flex-start;justify-content:center;padding:24px;z-index:50;overflow-y:auto}
 .mask.show{display:flex}
 .modal{background:var(--panel);border:1px solid var(--line);border-radius:20px;width:100%;
-  max-width:1000px;padding:24px;margin:auto}
+  max-width:960px;padding:24px;margin:auto}
 .mh{display:flex;align-items:center;gap:13px;margin-bottom:20px}
-.mh .avatar{width:56px;height:56px;flex:0 0 56px;border-radius:16px}
+.avatar{width:54px;height:54px;flex:0 0 54px;border-radius:16px;object-fit:cover;background:var(--panel2)}
 .mh h2{font-size:19px;font-weight:800}
 .mh h2 a{color:inherit;text-decoration:none}
 .mh h2 a:hover{color:var(--accent)}
 .x{margin-left:auto;background:var(--panel2);border:1px solid var(--line);color:var(--sub);
   width:34px;height:34px;border-radius:10px;cursor:pointer;font-size:15px;flex:0 0 34px}
-.x:hover{color:var(--txt)}
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:20px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:10px;margin-bottom:20px}
 .kpi{background:var(--panel2);border-radius:12px;padding:12px 13px}
 .kpi .l{font-size:9.5px;color:var(--sub);letter-spacing:.05em;margin-bottom:6px}
-.kpi .v{font-size:21px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
-.modal canvas{height:300px!important}
+.kpi .v{font-size:20px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+.cbox{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:16px}
+.cbox h3{font-size:12.5px;font-weight:700;margin-bottom:4px}
+.cbox canvas{height:280px!important}
 .hrow{display:flex;align-items:center;gap:12px;padding:10px 13px;background:var(--panel2);
   border-radius:11px;margin-bottom:6px;font-size:12.5px}
 .hrow .d{color:var(--sub);font-size:11.5px;min-width:132px}
 .hrow .s{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:700}
 .trend{font-size:11.5px;font-weight:800;padding:3px 8px;border-radius:6px}
-.up{background:rgba(46,230,168,.15);color:var(--ok)}
-.down{background:rgba(255,59,92,.15);color:var(--live)}
-.flat{background:var(--panel);color:var(--sub)}
-.hm{display:grid;grid-template-columns:30px repeat(24,1fr);gap:2px;margin-top:6px}
-.hm .hl{font-size:9px;color:var(--sub);display:flex;align-items:center;justify-content:flex-end;padding-right:4px}
-.hm .hh{font-size:9px;color:var(--sub);text-align:center}
-.hm .cell{aspect-ratio:1;border-radius:3px;background:#161c2b}
-.hmleg{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--sub);margin-top:8px}
-.hmleg i{width:14px;height:10px;border-radius:2px;display:inline-block}
-.scrollx{overflow-x:auto}
+.trend.up{background:rgba(46,230,168,.15)}
+.trend.down{background:rgba(255,59,92,.15)}
+.trend.flat{background:var(--panel);color:var(--sub)}
 </style>
 </head>
 <body>
@@ -156,14 +130,60 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
 
   <div class="hd">
     <span class="dot"></span>
-    <h1>ツイキャス配信者トラッカー</h1>
+    <h1>ツイキャス全体トラッカー</h1>
     <div class="meta">
-      <span class="chip" id="liveCount">—</span>
+      <span class="chip" id="chip">—</span>
       <span id="lastUpdate">—</span>
-      <button class="btn ghost" onclick="discover()">今すぐ自動収集</button>
-      <button class="btn ghost" onclick="backfill()">過去配信を取込</button>
-      <button class="btn ghost" onclick="cleanupZeros()">0データ削除</button>
+      <button class="btn ghost" onclick="discover()">自動収集</button>
+      <button class="btn ghost" onclick="backfill()">過去取込</button>
       <button class="btn ghost" onclick="exportData()">出力</button>
+    </div>
+  </div>
+
+  <div id="err"></div>
+
+  <!-- 全体グラフ（主役・線1本） -->
+  <div class="hero">
+    <div class="heroTop">
+      <div>
+        <div class="bigl">全体平均同接（最新日）</div>
+        <div class="bigv" id="heroVal">—</div>
+      </div>
+      <div class="deltas" id="deltas"></div>
+    </div>
+    <div class="ctrl">
+      <div class="seg" id="metric">
+        <button data-k="overall_avg" class="on">平均同接</button>
+        <button data-k="overall_avg_peak">平均ピーク</button>
+        <button data-k="overall_total_viewers">総来場者</button>
+        <button data-k="broadcasts">配信数</button>
+      </div>
+      <div class="seg" id="range">
+        <button data-k="30">30日</button>
+        <button data-k="90" class="on">90日</button>
+        <button data-k="365">1年</button>
+        <button data-k="0">全期間</button>
+      </div>
+    </div>
+    <canvas id="overall"></canvas>
+    <div class="note" id="note"></div>
+  </div>
+
+  <div class="stats3" id="stats3"></div>
+
+  <div class="sect">個別の配信者
+    <span class="sub">クリックでその人の日別平均</span>
+    <span class="sp"></span>
+    <div class="seg" id="listSort">
+      <button data-k="recent" class="on">直近平均順</button>
+      <button data-k="pct">伸び率順</button>
+      <button data-k="name">名前順</button>
+    </div>
+    <div class="seg" id="listFilter">
+      <button data-k="active" class="on">稼働中</button>
+      <button data-k="live">配信中</button>
+      <button data-k="pinned">手動</button>
+      <button data-k="dormant">休止</button>
     </div>
   </div>
 
@@ -172,45 +192,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
     <button class="btn" onclick="addBroadcaster()">追加</button>
   </div>
 
-  <div id="err"></div>
-
-  <!-- 全体トレンド（最上部） -->
-  <div class="sect">全体トレンド<span class="sub">直近の平均同接が過去と比べて上がっているか／下がっているか</span></div>
-  <div class="panel">
-    <div class="summary" id="summary"></div>
-    <div class="ctrl">
-      <div class="seg" id="scanSort">
-        <button data-k="pct" class="on">伸び率順</button>
-        <button data-k="recent">同接順</button>
-        <button data-k="name">名前順</button>
-      </div>
-      <div class="seg" id="scanFilter">
-        <button data-k="all" class="on">全員</button>
-        <button data-k="pinned">手動追加のみ</button>
-        <button data-k="live">配信中のみ</button>
-        <button data-k="dormant">休止のみ</button>
-      </div>
-    </div>
-    <div class="scrollx"><div class="scan" id="scan"></div></div>
-  </div>
-
-  <!-- 比較グラフ（上位のみ） -->
-  <div class="sect">配信ごとの推移<span class="sub">見やすさのため上位のみ表示</span></div>
-  <div class="panel">
-    <div class="ctrl">
-      <div class="seg" id="cmpMode">
-        <button data-k="top" class="on">上位6人</button>
-        <button data-k="pinned">手動追加</button>
-      </div>
-    </div>
-    <div class="chartrow">
-      <div class="cbox"><h3>平均同接（過去分は最高同接）</h3><canvas id="c1"></canvas></div>
-      <div class="cbox"><h3>総来場者</h3><canvas id="c2"></canvas></div>
-    </div>
-  </div>
-
-  <div class="sect">配信者一覧</div>
-  <div class="grid" id="grid"></div>
+  <div class="tbl" id="tbl"></div>
 </div>
 
 <div class="mask" id="mask" onclick="if(event.target===this)closeModal()">
@@ -218,133 +200,105 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
 </div>
 
 <script>
-const API = location.origin + '/api';
-let config = { broadcasters: [] };
-let stats = {};
-let c1, c2, sparks = {}, dChart = null, liveChart = null, openUid = null;
-let scanSort = 'pct', scanFilter = 'all', cmpMode = 'top';
-const COLORS = ['#5b8cff','#ff3b5c','#2ee6a8','#ffb340','#c17bff','#38d9f0','#ff7ab8','#9ee65a'];
-const PH = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2260%22 height=%2260%22%3E%3Crect fill=%22%231b2233%22 width=%2260%22 height=%2260%22/%3E%3C/svg%3E';
+const API=location.origin+'/api';
+let config={broadcasters:[]},stats={},overall=[];
+let oChart=null,dChart=null,openUid=null;
+let metric='overall_avg',range=90,listSort='recent',listFilter='active';
+const PH='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2260%22 height=%2260%22%3E%3Crect fill=%22%231b2233%22 width=%2260%22 height=%2260%22/%3E%3C/svg%3E';
+const METRIC_LABEL={overall_avg:'全体平均同接',overall_avg_peak:'全体平均ピーク',
+  overall_total_viewers:'総来場者',broadcasts:'配信数'};
 
-const esc = s => String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-const fmt = n => (n==null||isNaN(n))?'—':Number(n).toLocaleString('ja-JP');
-const tcUrl = u => 'https://twitcasting.tv/' + encodeURIComponent(u).replace(/%3A/gi,':');
+const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const fmt=n=>(n==null||isNaN(n))?'—':Number(n).toLocaleString('ja-JP');
+const tcUrl=u=>'https://twitcasting.tv/'+encodeURIComponent(u).replace(/%3A/gi,':');
 function withAlpha(hex,a){const h=String(hex).replace('#','');
   return `rgba(${parseInt(h.slice(0,2),16)},${parseInt(h.slice(2,4),16)},${parseInt(h.slice(4,6),16)},${a})`;}
+const mean=a=>a.length?Math.round(a.reduce((t,v)=>t+v,0)/a.length):null;
+const dayJp=d=>{const x=new Date(d+'T00:00:00+09:00');
+  return `${x.getMonth()+1}/${x.getDate()}(${'日月火水木金土'[x.getDay()]})`;};
 
-/* ===== グラフ共通スタイル（アニメーションなし・ポイントのみ） ===== */
-function gradFill(color){
-  return (ctx)=>{const {chart}=ctx,{ctx:c,chartArea}=chart;
-    if(!chartArea) return withAlpha(color,0.10);
-    const g=c.createLinearGradient(0,chartArea.top,0,chartArea.bottom);
-    g.addColorStop(0,withAlpha(color,0.30));g.addColorStop(.6,withAlpha(color,0.07));
-    g.addColorStop(1,withAlpha(color,0));return g;};
-}
+/* グラフ共通 */
+function gradFill(color){return ctx=>{const{chart}=ctx,{ctx:c,chartArea}=chart;
+  if(!chartArea)return withAlpha(color,.10);
+  const g=c.createLinearGradient(0,chartArea.top,0,chartArea.bottom);
+  g.addColorStop(0,withAlpha(color,.34));g.addColorStop(.6,withAlpha(color,.07));
+  g.addColorStop(1,withAlpha(color,0));return g;};}
 function lineStyle(color,{fill=true,dash=null}={}){
-  return {borderColor:color,backgroundColor:fill?gradFill(color):'transparent',fill:fill?'origin':false,
-    borderWidth:2.3,borderDash:dash||[],tension:.36,cubicInterpolationMode:'monotone',
-    pointRadius:4.5,pointHoverRadius:7.5,pointBackgroundColor:'#0b0e14',pointBorderColor:color,
-    pointBorderWidth:2.2,pointHoverBorderWidth:2.8,pointHitRadius:14};
-}
-const AXIS={
-  x:{grid:{display:false},border:{display:false},
-     ticks:{color:'#7c869e',font:{size:10.5},padding:8,maxRotation:0,autoSkipPadding:20}},
+  return{borderColor:color,backgroundColor:fill?gradFill(color):'transparent',fill:fill?'origin':false,
+    borderWidth:2.4,borderDash:dash||[],tension:.36,cubicInterpolationMode:'monotone',
+    pointRadius:4.5,pointHoverRadius:8,pointBackgroundColor:'#0b0e14',pointBorderColor:color,
+    pointBorderWidth:2.2,pointHoverBorderWidth:3,pointHitRadius:16};}
+const AXIS={x:{grid:{display:false},border:{display:false},
+    ticks:{color:'#7c869e',font:{size:10.5},padding:8,maxRotation:0,autoSkipPadding:22}},
   y:{beginAtZero:true,grid:{color:'rgba(255,255,255,.055)',drawTicks:false},border:{display:false},
-     ticks:{color:'#7c869e',font:{size:10.5},padding:10,maxTicksLimit:6}}};
+    ticks:{color:'#7c869e',font:{size:10.5},padding:10,maxTicksLimit:6}}};
 const TIP={backgroundColor:'rgba(13,17,26,.97)',borderColor:'rgba(255,255,255,.10)',borderWidth:1,
-  titleColor:'#e6ebf5',bodyColor:'#c3ccdd',padding:11,cornerRadius:10,
-  boxWidth:8,boxHeight:8,usePointStyle:true,titleFont:{size:11,weight:'700'},bodyFont:{size:12}};
-const NOANIM={animation:false,animations:{colors:false,x:false,y:false},transitions:{active:{animation:{duration:180}}}};
+  titleColor:'#e6ebf5',bodyColor:'#c3ccdd',padding:12,cornerRadius:10,
+  boxWidth:8,boxHeight:8,usePointStyle:true,titleFont:{size:11.5,weight:'700'},bodyFont:{size:12},
+  displayColors:false};
+const NOANIM={animation:false,animations:{colors:false,x:false,y:false},
+  transitions:{active:{animation:{duration:160}}}};
 
-/* ===== 現在地パルス ===== */
-let pulsePhase=0;
-Chart.register({id:'livePulse',afterDatasetsDraw(chart){
-  const idxs=chart.$pulse; if(!idxs||!idxs.length) return;
-  const t=(Math.sin(pulsePhase)+1)/2;
-  idxs.forEach(i=>{
-    const ds=chart.data.datasets[i]; if(!ds||!ds.data.length) return;
-    const meta=chart.getDatasetMeta(i),pt=meta.data[meta.data.length-1]; if(!pt) return;
-    const col=ds.borderColor||'#ff3b5c',ctx=chart.ctx;
-    const rad=(chart.$pulseSmall?2.5:4)+t*(chart.$pulseSmall?4:9);
-    ctx.save();
-    ctx.beginPath();ctx.arc(pt.x,pt.y,rad,0,Math.PI*2);
-    ctx.fillStyle=withAlpha(col,.30*(1-t));ctx.fill();
-    ctx.beginPath();ctx.arc(pt.x,pt.y,chart.$pulseSmall?2:3.4,0,Math.PI*2);
-    ctx.fillStyle=col;ctx.fill();
-    ctx.strokeStyle='#0b0e14';ctx.lineWidth=1.4;ctx.stroke();
-    ctx.restore();
-  });
+/* パルス */
+let ph=0;
+Chart.register({id:'pulse',afterDatasetsDraw(ch){
+  if(!ch.$pulse||!ch.$pulse.length)return;
+  const t=(Math.sin(ph)+1)/2;
+  ch.$pulse.forEach(i=>{const ds=ch.data.datasets[i];if(!ds||!ds.data.length)return;
+    const m=ch.getDatasetMeta(i),pt=m.data[m.data.length-1];if(!pt)return;
+    const col=ds.borderColor||'#5b8cff',c=ch.ctx;
+    c.save();c.beginPath();c.arc(pt.x,pt.y,4+t*9,0,Math.PI*2);
+    c.fillStyle=withAlpha(col,.30*(1-t));c.fill();
+    c.beginPath();c.arc(pt.x,pt.y,3.4,0,Math.PI*2);c.fillStyle=col;c.fill();
+    c.strokeStyle='#0b0e14';c.lineWidth=1.4;c.stroke();c.restore();});
 }});
-function pulseLoop(){
-  pulsePhase+=.075;
-  [dChart,liveChart,c1,c2,...Object.values(sparks)].forEach(ch=>{
-    if(ch&&ch.$pulse&&ch.$pulse.length){try{ch.draw();}catch(e){}}});
-  requestAnimationFrame(pulseLoop);
-}
-requestAnimationFrame(pulseLoop);
+(function loop(){ph+=.075;[oChart,dChart].forEach(c=>{if(c&&c.$pulse&&c.$pulse.length){try{c.draw()}catch(e){}}});
+  requestAnimationFrame(loop);})();
 
-/* ===== データ加工 ===== */
-function samplesOf(s){
-  if(!s) return [];
-  const a=[];
+/* データ */
+function samplesOf(s){if(!s)return[];const a=[];
   (s.history||[]).forEach(b=>a.push(...(b.samples||[])));
-  if(s.current_broadcast) a.push(...(s.current_broadcast.samples||[]));
-  return a.sort((x,y)=>new Date(x.timestamp)-new Date(y.timestamp));
-}
-const isLive = s => !!(s && s.current_broadcast);
-function latest(s){const a=samplesOf(s);return a.length?a[a.length-1]:null;}
-
-function broadcastsOf(st){
-  if(!st) return [];
+  if(s.current_broadcast)a.push(...(s.current_broadcast.samples||[]));
+  return a.sort((x,y)=>new Date(x.timestamp)-new Date(y.timestamp));}
+const isLive=s=>!!(s&&s.current_broadcast);
+function latest(s){const a=samplesOf(s).filter(x=>x.concurrent>0);return a.length?a[a.length-1]:null;}
+function broadcastsOf(st){if(!st)return[];
   const list=[...(st.history||[])];
-  if(st.current_broadcast) list.push({...st.current_broadcast,_live:true});
-  return list.map(b=>{
-    const sm=(b.samples||[]).filter(x=>x.concurrent>0);
-    if(sm.length) return {id:b.broadcast_id,t:new Date(b.started_at).getTime(),started_at:b.started_at,
-      live:!!b._live,archive:false,
+  if(st.current_broadcast)list.push({...st.current_broadcast,_live:true});
+  return list.map(b=>{const sm=(b.samples||[]).filter(x=>x.concurrent>0);
+    if(sm.length)return{t:new Date(b.started_at).getTime(),started_at:b.started_at,live:!!b._live,archive:false,
       avg:Math.round(sm.reduce((a,x)=>a+x.concurrent,0)/sm.length),
       peak:Math.max(...sm.map(x=>x.concurrent)),total:sm[sm.length-1].total};
-    if(b.source==='archive'&&(b.peak||b.total_final)) return {id:b.broadcast_id,
-      t:new Date(b.started_at).getTime(),started_at:b.started_at,live:false,archive:true,
-      avg:null,peak:b.peak||0,total:b.total_final||0,duration:b.duration||0};
-    return null;
-  }).filter(Boolean).sort((a,b)=>a.t-b.t);
-}
-const valOf = x => x.avg!=null ? x.avg : x.peak;
-const mean = a => a.length?Math.round(a.reduce((t,v)=>t+v,0)/a.length):null;
-const mdLabel = ms => {const d=new Date(ms);return `${d.getMonth()+1}/${d.getDate()}`;};
+    if(b.source==='archive'&&(b.peak||b.total_final))return{t:new Date(b.started_at).getTime(),
+      started_at:b.started_at,live:false,archive:true,avg:null,peak:b.peak||0,total:b.total_final||0};
+    return null;}).filter(Boolean).sort((a,b)=>a.t-b.t);}
+const valOf=x=>x.avg!=null?x.avg:x.peak;
 
-// 直近 n 配信と、その前 n 配信を比較
+// 個別: 日別平均
+function dailyOf(bs){
+  const m={};
+  bs.forEach(x=>{const k=new Date(x.t+9*3600e3).toISOString().slice(0,10);
+    (m[k]=m[k]||[]).push(valOf(x));});
+  return Object.keys(m).sort().map(k=>({day:k,val:mean(m[k]),n:m[k].length}));
+}
 function trendOf(bs){
-  const done=bs.filter(x=>!x.live);
-  if(done.length<2) return null;
-  const vals=done.map(valOf);
-  const n=Math.max(1,Math.min(5,Math.floor(vals.length/2)));
-  const recent=vals.slice(-n), prev=vals.slice(-2*n,-n);
-  if(!prev.length) return null;
-  const r=mean(recent),p=mean(prev);
-  return {recent:r,prev:p,pct:p?Math.round((r-p)/p*100):0,n,count:done.length};
-}
-function svgSpark(vals,color,w=88,h=26){
-  if(vals.length<2) return '<span style="color:#5f6a83;font-size:10px">—</span>';
-  const v=vals.slice(-24),max=Math.max(...v),min=Math.min(...v),rng=(max-min)||1;
-  const pts=v.map((val,i)=>[i/(v.length-1)*w,h-((val-min)/rng)*(h-6)-3]);
-  const d=pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
-  const last=pts[pts.length-1];
-  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block">
-    <path d="${d}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>
-    <circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="2.6" fill="#0b0e14" stroke="${color}" stroke-width="1.8"/>
-  </svg>`;
+  const done=bs.filter(x=>!x.live);if(done.length<2)return null;
+  const v=done.map(valOf);
+  const n=Math.max(1,Math.min(5,Math.floor(v.length/2)));
+  const r=mean(v.slice(-n)),p=mean(v.slice(-2*n,-n));
+  if(p==null)return null;
+  return{recent:r,prev:p,pct:p?Math.round((r-p)/p*100):0,n,count:done.length};
 }
 
-/* ===== 読み込み ===== */
 async function loadAll(){
   try{
-    const [c,st]=await Promise.all([
+    const [c,st,ov]=await Promise.all([
       fetch(API+'/config').then(r=>r.json()),
-      fetch(API+'/twitcas/stats').then(r=>r.json())]);
+      fetch(API+'/twitcas/stats').then(r=>r.json()),
+      fetch(API+'/overall').then(r=>r.json())]);
     config=(c&&c.broadcasters)?c:{broadcasters:[]};
     stats=st||{};
+    overall=Array.isArray(ov)?ov:[];
     render();
     document.getElementById('lastUpdate').textContent=
       new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
@@ -352,289 +306,199 @@ async function loadAll(){
 }
 
 function render(){
-  renderScan();
-  renderCombined();
-  renderCards();
-  if(openUid) renderModal(openUid);
+  renderOverall();
+  renderStats();
+  renderTable();
+  if(openUid)renderModal(openUid);
   const n=config.broadcasters.filter(b=>isLive(stats[b.user_id])).length;
   const au=config.broadcasters.filter(b=>b.auto&&!b.dormant).length;
   const dr=config.broadcasters.filter(b=>b.dormant).length;
-  document.getElementById('liveCount').textContent=`配信中 ${n}｜自動枠 ${au}/50｜休止 ${dr}`;
+  document.getElementById('chip').textContent=`配信中 ${n}｜自動 ${au}/50｜休止 ${dr}`;
 }
 
-/* ===== 全体トレンド ===== */
-function scanRows(){
-  return config.broadcasters.map(b=>{
-    const st=stats[b.user_id], bs=broadcastsOf(st), tr=trendOf(bs), l=latest(st);
-    return {b,bs,tr,live:isLive(st),
+/* ===== 全体グラフ ===== */
+function renderOverall(){
+  let rows=[...overall];
+  if(range>0)rows=rows.slice(-range);
+
+  const key=metric;
+  const vals=rows.map(r=>Number(r[key]||0));
+  const cur=rows.length?vals[vals.length-1]:null;
+  document.getElementById('heroVal').textContent=fmt(cur);
+  document.querySelector('.bigl').textContent=METRIC_LABEL[key]+'（最新日）';
+
+  // 比較
+  const cmp=(days,label)=>{
+    const all=overall.map(r=>Number(r[key]||0));
+    if(all.length<2)return`<div class="dl"><div class="l">${label}</div><div class="v flat">—</div></div>`;
+    const recent=mean(all.slice(-days));
+    const prev=mean(all.slice(-days*2,-days));
+    if(prev==null||!prev)return`<div class="dl"><div class="l">${label}</div><div class="v flat">—</div></div>`;
+    const p=Math.round((recent-prev)/prev*100);
+    const cls=p>0?'up':p<0?'down':'flat';
+    return`<div class="dl"><div class="l">${label}</div>
+      <div class="v ${cls}">${p>0?'▲ +':p<0?'▼ ':'± '}${Math.abs(p)}%</div></div>`;
+  };
+  document.getElementById('deltas').innerHTML=
+    cmp(1,'前日比')+cmp(7,'先週比')+cmp(30,'先月比');
+
+  document.getElementById('note').textContent = rows.length
+    ? `${rows[0].day} 〜 ${rows[rows.length-1].day}／${rows.length}日分・のべ${rows.reduce((t,r)=>t+Number(r.broadcasts||0),0).toLocaleString('ja-JP')}配信を集計`
+    : 'まだ集計できるデータがありません。「過去取込」を押すと一気に貯まります。';
+
+  const color=key==='overall_total_viewers'?'#2ee6a8':key==='broadcasts'?'#ffb340':'#5b8cff';
+  if(oChart)oChart.destroy();
+  oChart=new Chart(document.getElementById('overall'),{type:'line',
+    data:{labels:rows.map(r=>r.day),datasets:[{label:METRIC_LABEL[key],data:vals,...lineStyle(color)}]},
+    options:{responsive:true,maintainAspectRatio:false,...NOANIM,
+      layout:{padding:{top:8,right:12,left:2,bottom:2}},
+      interaction:{mode:'index',intersect:false},
+      plugins:{legend:{display:false},
+        tooltip:{...TIP,callbacks:{
+          title:it=>dayJp(rows[it[0].dataIndex].day),
+          label:it=>{const r=rows[it.dataIndex];return[
+            ` 全体平均同接   ${fmt(r.overall_avg)}`,
+            ` 全体平均ピーク ${fmt(r.overall_avg_peak)}`,
+            ` 総来場者       ${fmt(r.overall_total_viewers)}`,
+            ` 配信数         ${fmt(r.broadcasts)}`,
+            ` 配信者数       ${fmt(r.broadcasters)}`,
+            ` その日の最高   ${fmt(r.day_max_peak)}`];}}}},
+      scales:{x:{...AXIS.x,ticks:{...AXIS.x.ticks,callback:function(v){
+          const d=this.getLabelForValue(v);if(!d)return'';
+          const x=new Date(d+'T00:00:00+09:00');return`${x.getMonth()+1}/${x.getDate()}`;}}},
+        y:AXIS.y}}});
+  oChart.$pulse=[0];
+}
+
+function renderStats(){
+  const last=overall.length?overall[overall.length-1]:null;
+  const liveNow=config.broadcasters.filter(b=>isLive(stats[b.user_id]));
+  const curSum=liveNow.reduce((t,b)=>t+((latest(stats[b.user_id])||{}).concurrent||0),0);
+  const curAvg=liveNow.length?Math.round(curSum/liveNow.length):null;
+  const allDays=overall.map(r=>Number(r.overall_avg||0));
+  document.getElementById('stats3').innerHTML=`
+    <div class="st"><div class="l">いま配信中の平均同接</div><div class="v" style="color:var(--live)">${fmt(curAvg)}</div></div>
+    <div class="st"><div class="l">いま配信中の合計同接</div><div class="v">${fmt(curSum)}</div></div>
+    <div class="st"><div class="l">最新日の配信数</div><div class="v">${fmt(last&&last.broadcasts)}</div></div>
+    <div class="st"><div class="l">最新日の配信者数</div><div class="v">${fmt(last&&last.broadcasters)}</div></div>
+    <div class="st"><div class="l">全期間の平均</div><div class="v">${fmt(mean(allDays))}</div></div>
+    <div class="st"><div class="l">集計日数</div><div class="v">${overall.length}</div></div>`;
+}
+
+/* ===== 個別リスト ===== */
+function renderTable(){
+  let rows=config.broadcasters.map(b=>{
+    const st=stats[b.user_id],bs=broadcastsOf(st),tr=trendOf(bs),l=latest(st);
+    return{b,bs,tr,live:isLive(st),
       recent:tr?tr.recent:(bs.length?valOf(bs[bs.length-1]):null),
       cur:l?l.concurrent:null,
-      vals:bs.map(valOf)};
+      all:bs.length?mean(bs.map(valOf)):null};
   });
-}
-function renderScan(){
-  let rows=scanRows();
-  if(scanFilter==='pinned') rows=rows.filter(r=>r.b.pinned);
-  if(scanFilter==='live') rows=rows.filter(r=>r.live);
-  if(scanFilter==='dormant') rows=rows.filter(r=>r.b.dormant);
-  else rows=rows.filter(r=>!r.b.dormant);
-
-  const withTr=rows.filter(r=>r.tr);
-  const up=withTr.filter(r=>r.tr.pct>0).length, down=withTr.filter(r=>r.tr.pct<0).length;
-  const allAvg=mean(rows.map(r=>r.recent).filter(v=>v!=null));
-  document.getElementById('summary').innerHTML=`
-    <div class="sm"><div class="l">追跡人数</div><div class="v">${rows.length}</div></div>
-    <div class="sm"><div class="l">配信中</div><div class="v" style="color:var(--live)">${rows.filter(r=>r.live).length}</div></div>
-    <div class="sm"><div class="l">上昇傾向</div><div class="v" style="color:var(--ok)">${up}</div></div>
-    <div class="sm"><div class="l">下降傾向</div><div class="v" style="color:var(--live)">${down}</div></div>
-    <div class="sm"><div class="l">直近平均同接</div><div class="v">${fmt(allAvg)}</div></div>
-    <div class="sm"><div class="l">判定可能</div><div class="v">${withTr.length}<span style="font-size:12px;color:var(--sub)"> / ${rows.length}</span></div></div>
-    <div class="sm"><div class="l">休止中</div><div class="v" style="color:var(--warn)">${config.broadcasters.filter(x=>x.dormant).length}</div></div>`;
-
+  if(listFilter==='dormant')rows=rows.filter(r=>r.b.dormant);
+  else{
+    rows=rows.filter(r=>!r.b.dormant);
+    if(listFilter==='live')rows=rows.filter(r=>r.live);
+    if(listFilter==='pinned')rows=rows.filter(r=>r.b.pinned);
+  }
   rows.sort((a,b)=>{
-    if(scanSort==='name') return String(a.b.name).localeCompare(String(b.b.name),'ja');
-    if(scanSort==='recent') return (b.recent||0)-(a.recent||0);
-    const ap=a.tr?a.tr.pct:-99999, bp=b.tr?b.tr.pct:-99999;
-    return bp-ap;
+    if(listSort==='name')return String(a.b.name).localeCompare(String(b.b.name),'ja');
+    if(listSort==='pct')return (b.tr?b.tr.pct:-9999)-(a.tr?a.tr.pct:-9999);
+    return (b.recent||0)-(a.recent||0);
   });
 
-  const hd=`<div class="scanhd"><span></span><span></span><span>配信者</span>
-    <span style="text-align:right">推移</span><span style="text-align:right">直近平均</span>
-    <span style="text-align:right" class="hidesm">その前</span><span style="text-align:right">増減</span></div>`;
+  const hd=`<div class="thd"><span></span><span></span><span>配信者</span>
+    <span style="text-align:right">直近平均</span>
+    <span style="text-align:right" class="hidesm">通算平均</span>
+    <span style="text-align:right" class="hidesm">配信数</span>
+    <span style="text-align:right">増減</span><span></span></div>`;
 
-  const body = rows.length ? rows.map((r,i)=>{
-    const col = r.tr ? (r.tr.pct>0?'#2ee6a8':r.tr.pct<0?'#ff3b5c':'#8b95ad') : '#8b95ad';
-    const cls = r.tr ? (r.tr.pct>0?'up':r.tr.pct<0?'down':'flat') : 'flat';
-    const pctTxt = r.tr ? `${r.tr.pct>0?'▲ +':r.tr.pct<0?'▼ ':'± '}${Math.abs(r.tr.pct)}%` : '—';
-    return `<div class="scanrow" onclick="openModal('${esc(r.b.user_id)}')">
+  const body=rows.length?rows.map((r,i)=>{
+    const cls=r.tr?(r.tr.pct>0?'up':r.tr.pct<0?'down':'flat'):'flat';
+    const pct=r.tr?`${r.tr.pct>0?'▲ +':r.tr.pct<0?'▼ ':'± '}${Math.abs(r.tr.pct)}%`:'—';
+    return`<div class="trow ${r.b.dormant?'dormant':''}" onclick="openModal('${esc(r.b.user_id)}')">
       <div class="rk">${i+1}</div>
       <img src="${esc(r.b.image||PH)}" onerror="this.src='${PH}'">
       <div style="min-width:0">
-        <div class="nm2">${esc(r.b.name)}${r.live?' <span style="color:var(--live);font-size:10px">● LIVE</span>':''}</div>
-        <div class="u2">${esc(r.b.user_id)} · ${r.bs.length}配信</div>
+        <div class="nm">${esc(r.b.name)}</div>
+        <div class="u2"><span style="overflow:hidden;text-overflow:ellipsis">${esc(r.b.user_id)}</span>
+          ${r.live?'<span class="tag live">LIVE</span>':''}
+          <span class="tag ${r.b.pinned?'pin':''}">${r.b.pinned?'手動':'自動'}</span>
+          ${r.b.dormant?'<span class="tag dor">休止</span>':''}</div>
       </div>
-      <div style="display:flex;justify-content:flex-end">${svgSpark(r.vals,col)}</div>
       <div class="v2">${fmt(r.recent)}<small>直近${r.tr?r.tr.n:1}配信</small></div>
-      <div class="v2 hidesm">${r.tr?fmt(r.tr.prev):'—'}<small>${r.tr?'前'+r.tr.n+'配信':''}</small></div>
-      <div class="pct ${cls}">${pctTxt}</div>
-    </div>`;
-  }).join('') : '<div class="empty">該当なし</div>';
-
-  document.getElementById('scan').innerHTML = hd + body;
-}
-
-/* ===== 比較グラフ（上位のみ） ===== */
-function renderCombined(){
-  let cands=config.broadcasters.map(b=>({b,bs:broadcastsOf(stats[b.user_id])}))
-    .filter(x=>x.bs.length>0);
-  if(cmpMode==='pinned') cands=cands.filter(x=>x.b.pinned);
-  cands.sort((a,b)=>valOf(b.bs[b.bs.length-1])-valOf(a.bs[a.bs.length-1]));
-  cands=cands.slice(0,6);
-
-  const ds1=[],ds2=[];
-  cands.forEach((x,i)=>{
-    const c=COLORS[i%COLORS.length];
-    const base={label:x.b.name,...lineStyle(c,{fill:cands.length<=2})};
-    ds1.push({...base,data:x.bs.map(v=>({x:v.t,y:valOf(v)}))});
-    ds2.push({...base,data:x.bs.map(v=>({x:v.t,y:v.total}))});
-  });
-
-  const opt=()=>({responsive:true,maintainAspectRatio:false,...NOANIM,parsing:false,
-    layout:{padding:{top:6,right:10,left:2,bottom:2}},
-    interaction:{mode:'nearest',intersect:false},
-    plugins:{
-      legend:{display:true,position:'top',align:'end',
-        labels:{color:'#8b95ad',boxWidth:8,boxHeight:8,usePointStyle:true,pointStyle:'circle',
-          font:{size:11},padding:14}},
-      tooltip:{...TIP,callbacks:{
-        title:it=>new Date(it[0].parsed.x).toLocaleString('ja-JP',
-          {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}),
-        label:it=>` ${it.dataset.label}  ${it.parsed.y.toLocaleString('ja-JP')}`}}},
-    scales:{x:{...AXIS.x,type:'linear',ticks:{...AXIS.x.ticks,maxTicksLimit:7,callback:v=>mdLabel(v)}},
-            y:AXIS.y}});
-
-  if(c1)c1.destroy(); if(c2)c2.destroy();
-  c1=new Chart(document.getElementById('c1'),{type:'line',data:{datasets:ds1},options:opt()});
-  c2=new Chart(document.getElementById('c2'),{type:'line',data:{datasets:ds2},options:opt()});
-  c1.$pulse=[];c2.$pulse=[];
-}
-
-/* ===== カード ===== */
-function renderCards(){
-  const g=document.getElementById('grid');
-  if(!config.broadcasters.length){
-    g.innerHTML='<div class="empty">配信者を追加するか「今すぐ自動収集」を押してください</div>';return;}
-  const sorted=[...config.broadcasters].sort((x,y)=>{
-    const dx=x.dormant?1:0,dy=y.dormant?1:0;
-    if(dx!==dy) return dx-dy;
-    const lx=isLive(stats[x.user_id])?1:0,ly=isLive(stats[y.user_id])?1:0;
-    if(lx!==ly) return ly-lx;
-    const px=x.pinned?1:0,py=y.pinned?1:0;
-    if(px!==py) return py-px;
-    return ((latest(stats[y.user_id])||{}).concurrent||0)-((latest(stats[x.user_id])||{}).concurrent||0);
-  });
-  g.innerHTML=sorted.map(b=>{
-    const st=stats[b.user_id],live=isLive(st),l=latest(st);
-    return `<div class="card ${live?'live':''} ${b.dormant?'dormant':''}" onclick="openModal('${esc(b.user_id)}')">
-      <div class="badge ${live?'on':''}">${live?'● LIVE':'OFFLINE'}</div>
-      <div class="top">
-        <img class="avatar" src="${esc(b.image||PH)}" onerror="this.src='${PH}'">
-        <div style="min-width:0">
-          <div class="nm">${esc(b.name)}</div>
-          <div class="uid"><span style="overflow:hidden;text-overflow:ellipsis">${esc(b.user_id)}</span>
-            <span class="tag ${b.pinned?'pin':''}">${b.pinned?'手動':'自動'}</span>${b.dormant?'<span class="tag dor">休止</span>':''}</div>
-        </div>
+      <div class="v2 hidesm">${fmt(r.all)}<small>通算</small></div>
+      <div class="v2 hidesm">${r.bs.length}<small>配信</small></div>
+      <div class="pct ${cls}">${pct}</div>
+      <div class="acts2">
+        ${r.b.dormant?`<button class="iconbtn" onclick="event.stopPropagation();wake('${esc(r.b.user_id)}')" title="再開">▶</button>`:''}
+        <a class="iconbtn" href="${tcUrl(r.b.user_id)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="配信ページ">↗</a>
+        <button class="iconbtn d" onclick="event.stopPropagation();removeBroadcaster('${esc(r.b.user_id)}')" title="削除">✕</button>
       </div>
-      <div class="nums">
-        <div class="num"><div class="l">同時接続</div><div class="v ${live?'hl':''}">${fmt(l&&l.concurrent)}</div></div>
-        <div class="num"><div class="l">総来場者</div><div class="v">${fmt(l&&l.total)}</div></div>
-      </div>
-      <div class="spark"><canvas id="sp_${cssId(b.user_id)}"></canvas></div>
-      <div class="acts">
-        ${b.dormant?`<button class="iconbtn" onclick="event.stopPropagation();wake('${esc(b.user_id)}')" title="監視を再開">▶</button>`:''}
-        <a class="iconbtn" href="${tcUrl(b.user_id)}" target="_blank" rel="noopener"
-           onclick="event.stopPropagation()" title="配信ページを開く">↗</a>
-        <button class="iconbtn d" onclick="event.stopPropagation();removeBroadcaster('${esc(b.user_id)}')" title="削除">✕</button>
-      </div>
-    </div>`;}).join('');
-  sorted.forEach((b,i)=>drawSpark(b,i));
-}
-const cssId = u => u.replace(/[^a-zA-Z0-9_]/g,'_');
-function drawSpark(b,i){
-  const el=document.getElementById('sp_'+cssId(b.user_id)); if(!el) return;
-  const a=samplesOf(stats[b.user_id]).slice(-40);
-  if(sparks[b.user_id]){sparks[b.user_id].destroy();delete sparks[b.user_id];}
-  if(a.length<2) return;
-  sparks[b.user_id]=new Chart(el.getContext('2d'),{type:'line',
-    data:{labels:a.map(()=>''),datasets:[{data:a.map(s=>s.concurrent),
-      ...lineStyle(COLORS[i%COLORS.length]),borderWidth:2,pointRadius:0,pointHoverRadius:0}]},
-    options:{responsive:true,maintainAspectRatio:false,...NOANIM,
-      plugins:{legend:{display:false},tooltip:{enabled:false}},
-      scales:{x:{display:false},y:{display:false}}}});
-  sparks[b.user_id].$pulseSmall=true;
-  sparks[b.user_id].$pulse=isLive(stats[b.user_id])?[0]:[];
+    </div>`;}).join(''):'<div class="empty">該当なし</div>';
+  document.getElementById('tbl').innerHTML=hd+body;
 }
 
-/* ===== モーダル ===== */
+/* ===== モーダル（個別・日別平均） ===== */
 function openModal(uid){openUid=uid;document.getElementById('mask').classList.add('show');renderModal(uid);}
 function closeModal(){openUid=null;document.getElementById('mask').classList.remove('show');
-  if(dChart){dChart.destroy();dChart=null;}
-  if(liveChart){liveChart.destroy();liveChart=null;}}
-
-function heatmapHtml(samples){
-  const DOW=['月','火','水','木','金','土','日'];
-  const sum=Array.from({length:7},()=>Array(24).fill(0));
-  const cnt=Array.from({length:7},()=>Array(24).fill(0));
-  samples.forEach(x=>{if(!(x.concurrent>0))return;
-    const d=new Date(x.timestamp);sum[(d.getDay()+6)%7][d.getHours()]+=x.concurrent;cnt[(d.getDay()+6)%7][d.getHours()]++;});
-  let max=0;
-  const avg=sum.map((row,i)=>row.map((v,j)=>{const a=cnt[i][j]?Math.round(v/cnt[i][j]):0;if(a>max)max=a;return a;}));
-  if(max===0) return '<div class="empty">まだデータがありません</div>';
-  let html='<div class="hm"><div></div>';
-  for(let h=0;h<24;h++) html+=`<div class="hh">${h%3===0?h:''}</div>`;
-  html+='</div><div class="hm">';
-  for(let i=0;i<7;i++){html+=`<div class="hl">${DOW[i]}</div>`;
-    for(let h=0;h<24;h++){const v=avg[i][h];
-      html+=`<div class="cell" ${v>0?`title="${DOW[i]} ${h}時 平均${v}"`:''} style="${v>0?`background:${withAlpha('#ff3b5c',0.12+0.88*(v/max))}`:''}"></div>`;}}
-  html+='</div><div class="hmleg">少 <i style="background:'+withAlpha('#ff3b5c',.15)+'"></i><i style="background:'+withAlpha('#ff3b5c',.45)+'"></i><i style="background:'+withAlpha('#ff3b5c',.75)+'"></i><i style="background:'+withAlpha('#ff3b5c',1)+'"></i> 多（最大 '+max+'）</div>';
-  return html;
-}
+  if(dChart){dChart.destroy();dChart=null;}}
 
 function renderModal(uid){
-  const b=config.broadcasters.find(x=>x.user_id===uid); if(!b) return closeModal();
-  const s=stats[uid],live=isLive(s),a=samplesOf(s),l=latest(s);
-  const bs=broadcastsOf(s), tr=trendOf(bs);
-  const nz=a.filter(x=>x.concurrent>0);
+  const b=config.broadcasters.find(x=>x.user_id===uid);if(!b)return closeModal();
+  const st=stats[uid],live=isLive(st),bs=broadcastsOf(st),tr=trendOf(bs),l=latest(st);
+  const daily=dailyOf(bs);
   const peak=bs.length?Math.max(...bs.map(x=>x.peak)):null;
-  const overallAvg=mean(bs.map(valOf));
-  const cur=nz.length?nz[nz.length-1]:null;
-
-  const trBox = tr
-    ? `<div class="kpi"><div class="l">トレンド（直近${tr.n}配信）</div>
-         <div class="v" style="color:${tr.pct>0?'var(--ok)':tr.pct<0?'var(--live)':'var(--sub)'}">
-         ${tr.pct>0?'+':''}${tr.pct}%</div></div>`
-    : `<div class="kpi"><div class="l">トレンド</div><div class="v" style="font-size:14px;color:var(--sub)">配信数不足</div></div>`;
 
   document.getElementById('modal').innerHTML=`
     <div class="mh">
       <img class="avatar" src="${esc(b.image||PH)}" onerror="this.src='${PH}'">
       <div style="min-width:0">
         <h2><a href="${tcUrl(uid)}" target="_blank" rel="noopener">${esc(b.name)} ↗</a></h2>
-        <div class="uid" style="margin-top:5px">${esc(uid)}
+        <div class="u2" style="margin-top:6px">${esc(uid)}
+          ${live?'<span class="tag live">LIVE</span>':''}
           <span class="tag ${b.pinned?'pin':''}">${b.pinned?'手動':'自動'}</span>
-          ${b.dormant?'<span class="tag dor">休止</span>':''}
-          ${live?'<span style="color:var(--live);font-weight:700;font-size:11px">● 配信中</span>':''}</div>
-        ${b.dormant?`<div style="margin-top:8px"><button class="btn ghost" onclick="wake('${esc(uid)}')">監視を再開する</button></div>`:''}
+          ${b.dormant?'<span class="tag dor">休止</span>':''}</div>
       </div>
       <button class="x" onclick="closeModal()">✕</button>
     </div>
     <div class="kpis">
-      <div class="kpi"><div class="l">現在の同接</div><div class="v">${live?fmt(cur&&cur.concurrent):'—'}</div></div>
-      <div class="kpi"><div class="l">総来場者</div><div class="v">${live?fmt(cur&&cur.total):'—'}</div></div>
-      ${trBox}
+      <div class="kpi"><div class="l">現在の同接</div><div class="v">${live?fmt(l&&l.concurrent):'—'}</div></div>
       <div class="kpi"><div class="l">直近平均</div><div class="v">${fmt(tr?tr.recent:(bs.length?valOf(bs[bs.length-1]):null))}</div></div>
-      <div class="kpi"><div class="l">通算平均</div><div class="v">${fmt(overallAvg)}</div></div>
+      <div class="kpi"><div class="l">通算平均</div><div class="v">${fmt(bs.length?mean(bs.map(valOf)):null)}</div></div>
       <div class="kpi"><div class="l">最高同接</div><div class="v">${fmt(peak)}</div></div>
+      <div class="kpi"><div class="l">トレンド</div><div class="v ${tr?(tr.pct>0?'up':tr.pct<0?'down':'flat'):'flat'}">${tr?(tr.pct>0?'+':'')+tr.pct+'%':'—'}</div></div>
       <div class="kpi"><div class="l">記録配信数</div><div class="v">${bs.filter(x=>!x.live).length}</div></div>
     </div>
-    <div class="cbox"><h3>配信ごとの推移</h3><canvas id="dc"></canvas></div>
-    ${live?'<div class="cbox" style="margin-top:14px"><h3>現在の配信（リアルタイム）</h3><canvas id="dcLive"></canvas></div>':''}
-    <div class="sect" style="margin-top:24px">曜日・時間帯別 平均同接</div>
-    ${heatmapHtml(a)}
-    <div class="sect" style="margin-top:26px">配信ごとの記録</div>
-    ${bs.length? [...bs].reverse().map((x,i,arr)=>{
-      const prev=arr[i+1]; const v=valOf(x);
+    <div class="cbox"><h3>日ごとの平均同接</h3><canvas id="dc"></canvas></div>
+    <div class="sect" style="margin-top:24px">配信ごとの記録</div>
+    ${bs.length?[...bs].reverse().slice(0,60).map((x,i,arr)=>{
+      const prev=arr[i+1],v=valOf(x);
       let t='<span class="trend flat">—</span>';
       if(prev){const pv=valOf(prev),d=v-pv,p=pv?Math.round(d/pv*100):0;
         t=d>0?`<span class="trend up">▲ ${p}%</span>`:d<0?`<span class="trend down">▼ ${Math.abs(p)}%</span>`:'<span class="trend flat">±0</span>';}
-      return `<div class="hrow">
+      return`<div class="hrow">
         <span class="d">${new Date(x.started_at).toLocaleString('ja-JP',{year:'2-digit',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</span>
-        ${t}
-        <span class="s">${x.avg!=null?`平均 ${fmt(x.avg)}`:`最高 ${fmt(x.peak)}`} ／ 総 ${fmt(x.total)}${x.archive?' <span style="color:var(--sub);font-weight:400">(過去)</span>':x.live?' <span style="color:var(--live);font-weight:400">(配信中)</span>':''}</span>
-      </div>`;}).join('') : '<div class="empty">まだ配信記録がありません</div>'}`;
+        ${t}<span class="s">${x.avg!=null?`平均 ${fmt(x.avg)}`:`最高 ${fmt(x.peak)}`} ／ 総 ${fmt(x.total)}${x.archive?' <span style="color:var(--sub);font-weight:400">(過去)</span>':x.live?' <span style="color:var(--live);font-weight:400">(配信中)</span>':''}</span>
+      </div>`;}).join(''):'<div class="empty">まだ配信記録がありません</div>'}`;
 
   if(dChart){dChart.destroy();dChart=null;}
-  if(liveChart){liveChart.destroy();liveChart=null;}
-
-  if(bs.length){
-    const hasAvg=bs.some(x=>x.avg!=null);
+  if(daily.length){
     dChart=new Chart(document.getElementById('dc'),{type:'line',
-      data:{labels:bs.map(x=>mdLabel(x.t)),
-        datasets:[
-          {label:'最高同接',data:bs.map(x=>x.peak),...lineStyle('#5b8cff'),order:2},
-          ...(hasAvg?[{label:'平均同接',data:bs.map(x=>x.avg),...lineStyle('#ff3b5c',{fill:false,dash:[5,4]}),order:1}]:[])]},
+      data:{labels:daily.map(d=>d.day),
+        datasets:[{label:'日別平均同接',data:daily.map(d=>d.val),...lineStyle('#ff3b5c')}]},
       options:{responsive:true,maintainAspectRatio:false,...NOANIM,
-        layout:{padding:{top:6,right:10,left:2,bottom:2}},
-        interaction:{mode:'index',intersect:false},spanGaps:true,
-        plugins:{legend:{display:true,position:'top',align:'end',
-            labels:{color:'#8b95ad',boxWidth:8,boxHeight:8,usePointStyle:true,pointStyle:'circle',font:{size:11},padding:14}},
+        layout:{padding:{top:8,right:10,left:2,bottom:2}},
+        interaction:{mode:'index',intersect:false},
+        plugins:{legend:{display:false},
           tooltip:{...TIP,callbacks:{
-            title:it=>{const x=bs[it[0].dataIndex];
-              return new Date(x.started_at).toLocaleString('ja-JP',{year:'2-digit',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})
-                +(x.live?'  配信中':x.archive?'  (過去)':'');},
-            label:it=>it.parsed.y==null?null:` ${it.dataset.label}  ${it.parsed.y.toLocaleString('ja-JP')}`}}},
-        scales:{x:AXIS.x,y:AXIS.y}}});
-  }
-
-  if(live&&nz.length>1){
-    const el=document.getElementById('dcLive');
-    if(el){
-      liveChart=new Chart(el,{type:'line',
-        data:{labels:nz.map(x=>new Date(x.timestamp).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'})),
-          datasets:[
-            {label:'同時接続',data:nz.map(x=>x.concurrent),...lineStyle('#ff3b5c'),pointRadius:0,pointHoverRadius:5,yAxisID:'y'},
-            {label:'総来場者',data:nz.map(x=>x.total),...lineStyle('#5b8cff',{fill:false}),pointRadius:0,pointHoverRadius:5,yAxisID:'y1'}]},
-        options:{responsive:true,maintainAspectRatio:false,...NOANIM,
-          layout:{padding:{top:6,right:6,left:2,bottom:2}},
-          interaction:{mode:'index',intersect:false},
-          plugins:{legend:{display:true,position:'top',align:'end',
-              labels:{color:'#8b95ad',boxWidth:8,boxHeight:8,usePointStyle:true,pointStyle:'circle',font:{size:11},padding:14}},
-            tooltip:{...TIP,callbacks:{label:it=>` ${it.dataset.label}  ${it.parsed.y.toLocaleString('ja-JP')}`}}},
-          scales:{x:{...AXIS.x,ticks:{...AXIS.x.ticks,maxTicksLimit:7}},
-            y:{...AXIS.y,position:'left',ticks:{...AXIS.y.ticks,color:'#ff8fa3'}},
-            y1:{...AXIS.y,position:'right',grid:{display:false},ticks:{...AXIS.y.ticks,color:'#8fb0ff'}}}}});
-      liveChart.$pulse=[0,1];
-    }
+            title:it=>dayJp(daily[it[0].dataIndex].day),
+            label:it=>{const d=daily[it.dataIndex];
+              return[` 平均同接 ${fmt(d.val)}`,` 配信数   ${d.n}`];}}}},
+        scales:{x:{...AXIS.x,ticks:{...AXIS.x.ticks,callback:function(v){
+            const d=this.getLabelForValue(v);if(!d)return'';
+            const x=new Date(d+'T00:00:00+09:00');return`${x.getMonth()+1}/${x.getDate()}`;}}},
+          y:AXIS.y}}});
+    dChart.$pulse=live?[0]:[];
   }
 }
 
@@ -642,75 +506,56 @@ function renderModal(uid){
 function extractUserId(v){v=v.trim();const m=v.match(/twitcasting\.tv\/([^/?#]+)/);return m?m[1]:v;}
 async function addBroadcaster(){
   const el=document.getElementById('inp'),v=el.value.trim();
-  if(!v) return showErr('URLを入力してください');
-  try{
-    const r=await fetch(API+'/config/broadcasters',{method:'POST',
+  if(!v)return showErr('URLを入力してください');
+  try{const r=await fetch(API+'/config/broadcasters',{method:'POST',
       headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:extractUserId(v)})});
-    const j=await r.json();
-    if(!r.ok) throw new Error(j.error||'追加できませんでした');
-    el.value='';document.getElementById('err').innerHTML='';
-    await loadAll();
-  }catch(e){showErr('追加エラー: '+e.message);}
+    const j=await r.json();if(!r.ok)throw new Error(j.error||'追加できませんでした');
+    el.value='';await loadAll();}catch(e){showErr('追加エラー: '+e.message);}
 }
 async function removeBroadcaster(uid){
-  if(!confirm('削除しますか？（記録も消えます）')) return;
+  if(!confirm('削除しますか？（記録も消えます）'))return;
   try{await fetch(API+'/config/broadcasters/'+encodeURIComponent(uid),{method:'DELETE'});
-    if(openUid===uid) closeModal();await loadAll();
-  }catch(e){showErr('削除エラー: '+e.message);}
+    if(openUid===uid)closeModal();await loadAll();}catch(e){showErr('削除エラー: '+e.message);}
 }
 async function wake(uid){
   try{await fetch(API+'/wake/'+encodeURIComponent(uid),{method:'POST'});
-    showErr('監視を再開しました');await loadAll();
-  }catch(e){showErr('エラー: '+e.message);}
+    showErr('監視を再開しました');await loadAll();}catch(e){showErr('エラー: '+e.message);}
 }
 async function discover(){
   showErr('配信中の上位を検索しています…');
   try{const r=await fetch(API+'/discover',{method:'POST'});const j=await r.json();
     if(!j.ok){showErr('自動収集エラー: '+(j.reason||'unknown'));return;}
-    showErr(`${(j.added||[]).length} 人を自動追加（自動枠 ${j.auto_slots}）`);await loadAll();
-  }catch(e){showErr('自動収集エラー: '+e.message);}
+    showErr(`${(j.added||[]).length}人追加／${(j.slept||[]).length}人休止（枠 ${j.auto_slots}）`);
+    await loadAll();}catch(e){showErr('自動収集エラー: '+e.message);}
 }
 async function backfill(){
-  if(!confirm('登録中の全配信者の過去配信を取り込みます。人数が多いと数分かかります。')) return;
+  if(!confirm('登録中の全配信者の過去配信を取り込みます。人数が多いと数分かかります。'))return;
   showErr('取り込み中…（完了までこのページを閉じないでください）');
   try{const r=await fetch(API+'/backfill',{method:'POST'});const j=await r.json();
     const n=Object.values(j).reduce((t,x)=>t+(x.imported||0),0);
-    showErr(`${n} 件の過去配信を取り込みました`);await loadAll();
-  }catch(e){showErr('取込エラー: '+e.message);}
-}
-async function cleanupZeros(){
-  if(!confirm('同接0の不正サンプルを全削除します。よろしいですか？')) return;
-  try{const r=await fetch(API+'/cleanup',{method:'POST'});const j=await r.json();
-    showErr(`${j.removed} 件の0データを削除しました`);await loadAll();
-  }catch(e){showErr('削除エラー: '+e.message);}
+    showErr(`${n}件の過去配信を取り込みました`);await loadAll();}catch(e){showErr('取込エラー: '+e.message);}
 }
 function exportData(){
-  const blob=new Blob([JSON.stringify({config,stats},null,2)],{type:'application/json'});
+  const blob=new Blob([JSON.stringify({overall,config,stats},null,2)],{type:'application/json'});
   const u=URL.createObjectURL(blob),a=document.createElement('a');
   a.href=u;a.download=`twitcas-${new Date().toISOString().slice(0,10)}.json`;a.click();URL.revokeObjectURL(u);
 }
-function showErr(m){
-  document.getElementById('err').innerHTML=`<div class="err">${esc(m)}</div>`;
-  setTimeout(()=>{const e=document.getElementById('err');if(e)e.innerHTML='';},6000);
-}
+function showErr(m){document.getElementById('err').innerHTML=`<div class="err">${esc(m)}</div>`;
+  setTimeout(()=>{const e=document.getElementById('err');if(e)e.innerHTML='';},6000);}
 
-/* セグメント操作 */
-function bindSeg(id,cb){
-  document.getElementById(id).addEventListener('click',e=>{
-    const b=e.target.closest('button'); if(!b) return;
-    [...b.parentNode.children].forEach(x=>x.classList.remove('on'));
-    b.classList.add('on'); cb(b.dataset.k);
-  });
-}
-bindSeg('scanSort',k=>{scanSort=k;renderScan();});
-bindSeg('scanFilter',k=>{scanFilter=k;renderScan();});
-bindSeg('cmpMode',k=>{cmpMode=k;renderCombined();});
+function bindSeg(id,cb){document.getElementById(id).addEventListener('click',e=>{
+  const b=e.target.closest('button');if(!b)return;
+  [...b.parentNode.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');cb(b.dataset.k);});}
+bindSeg('metric',k=>{metric=k;renderOverall();});
+bindSeg('range',k=>{range=Number(k);renderOverall();});
+bindSeg('listSort',k=>{listSort=k;renderTable();});
+bindSeg('listFilter',k=>{listFilter=k;renderTable();});
 
 document.getElementById('inp').addEventListener('keydown',e=>{if(e.key==='Enter')addBroadcaster();});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
 
 loadAll();
-setInterval(loadAll,5000);
+setInterval(loadAll,10000);
 </script>
 </body>
 </html>
