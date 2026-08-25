@@ -64,7 +64,7 @@ async function bootstrap() {
   }
   console.log('[storage] supabase');
   try {
-    const bcs = await sb('GET', 'tw_broadcasters', { query: '?select=user_id,name,image,pinned,auto,last_live_at,best_peak&order=created_at.asc' });
+    const bcs = await sb('GET', 'tw_broadcasters', { query: '?select=user_id,name,image,pinned,auto,last_live_at,best_peak,dormant,dormant_at&order=created_at.asc' });
     config = { broadcasters: bcs || [] };
 
     const brs = await sb('GET', 'tw_broadcasts', { query: '?select=id,user_id,started_at,ended_at,peak,total,duration,source&order=started_at.asc' });
@@ -198,6 +198,7 @@ async function fetchUserInfo(userId) {
 // 起動時に既存配信者の名前・アイコンを更新
 async function refreshAllUserInfo() {
   for (const b of config.broadcasters) {
+    if (b.dormant) continue;
     try {
       const info = await fetchUserInfo(b.user_id);
       if (!info) continue;
@@ -364,49 +365,90 @@ async function discoverTopLives() {
     .filter(c => c.user_id)
     .sort((a, b) => b.viewers - a.viewers);
 
-  const known = new Set(config.broadcasters.map(b => b.user_id));
-  let autoCount = config.broadcasters.filter(b => b.auto).length;
-  const added = [];
+  const byId = new Map(config.broadcasters.map(b => [b.user_id, b]));
+  const added = [], revived = [], slept = [];
+  const now = new Date().toISOString();
+
+  // 実力スコア = これまでの最高同接（今回の値で更新）
+  const scoreOf = b => Number(b.best_peak || 0);
+  const activeAutos = () => config.broadcasters.filter(b => b.auto && !b.dormant);
 
   for (const c of cands) {
-    if (autoCount >= AUTO_LIMIT) break;
-    if (known.has(c.user_id)) continue;
+    const ex = byId.get(c.user_id);
+
+    // 既存: 実績更新＋休止からの復帰判定
+    if (ex) {
+      let changed = false;
+      if (c.viewers > (ex.best_peak || 0)) { ex.best_peak = c.viewers; changed = true; }
+      ex.last_live_at = now;
+      if (ex.dormant && ex.auto) {
+        const autos = activeAutos();
+        if (autos.length < AUTO_LIMIT) {
+          ex.dormant = false; ex.dormant_at = null; changed = true; revived.push(ex.user_id);
+        } else {
+          const weakest = autos.reduce((m, b) => scoreOf(b) < scoreOf(m) ? b : m, autos[0]);
+          if (c.viewers > scoreOf(weakest)) {
+            weakest.dormant = true; weakest.dormant_at = now;
+            ex.dormant = false; ex.dormant_at = null;
+            slept.push(weakest.user_id); revived.push(ex.user_id); changed = true;
+            try { await persistBroadcasterAdd(weakest); } catch (e) {}
+          }
+        }
+      }
+      if (changed) { try { await persistBroadcasterAdd(ex); } catch (e) {} }
+      continue;
+    }
+
+    // 新規
+    const autos = activeAutos();
+    let makeRoom = true;
+    if (autos.length >= AUTO_LIMIT) {
+      const weakest = autos.reduce((m, b) => scoreOf(b) < scoreOf(m) ? b : m, autos[0]);
+      if (c.viewers > scoreOf(weakest)) {
+        weakest.dormant = true; weakest.dormant_at = now;
+        slept.push(weakest.user_id);
+        try { await persistBroadcasterAdd(weakest); } catch (e) {}
+      } else {
+        makeRoom = false;   // 実績が下回るなら入れ替えない
+      }
+    }
+    if (!makeRoom) continue;
 
     const b = {
       user_id: c.user_id,
       name: c.name || c.user_id,
       image: (c.image || '').replace(/^http:/, 'https:').replace(/_normal\.(jpg|png)/, '_400x400.$1') || null,
-      pinned: false,
-      auto: true,
-      best_peak: c.viewers,
-      last_live_at: new Date().toISOString()
+      pinned: false, auto: true, dormant: false,
+      best_peak: c.viewers, last_live_at: now
     };
     config.broadcasters.push(b);
-    broadcasterStats[b.user_id] = { user_id: b.user_id, current_broadcast: null, history: [] };
-    known.add(b.user_id);
-    autoCount++;
+    byId.set(b.user_id, b);
+    if (!broadcasterStats[b.user_id]) broadcasterStats[b.user_id] = { user_id: b.user_id, current_broadcast: null, history: [] };
     added.push({ user_id: b.user_id, name: b.name, viewers: c.viewers });
     try { await persistBroadcasterAdd(b); } catch (e) { console.error('auto add:', e.message); }
   }
 
   if (!USE_SB) saveJson(CONFIG_FILE, config);
-  if (added.length) console.log(`[auto] ${added.length}人を自動追加 (auto枠 ${autoCount}/${AUTO_LIMIT})`);
-  return { ok: true, added, auto_slots: `${autoCount}/${AUTO_LIMIT}`, candidates: cands.length };
+  const act = activeAutos().length;
+  if (added.length || slept.length || revived.length) {
+    console.log(`[auto] +${added.length} 休止${slept.length} 復帰${revived.length} (稼働 ${act}/${AUTO_LIMIT})`);
+  }
+  return { ok: true, added, slept, revived, auto_slots: `${act}/${AUTO_LIMIT}`, candidates: cands.length };
 }
 
-// 自動枠の整理: 配信実績が最も低い auto を削除して枠を空ける
+// 自動枠の整理: 実績下位を「休止」にする（データは消さない）
 async function pruneAuto(keep = AUTO_LIMIT) {
-  const autos = config.broadcasters.filter(b => b.auto);
-  if (autos.length <= keep) return { removed: 0 };
+  const autos = config.broadcasters.filter(b => b.auto && !b.dormant);
+  if (autos.length <= keep) return { slept: 0 };
   autos.sort((a, b) => (a.best_peak || 0) - (b.best_peak || 0));
   const drop = autos.slice(0, autos.length - keep);
+  const now = new Date().toISOString();
   for (const b of drop) {
-    config.broadcasters = config.broadcasters.filter(x => x.user_id !== b.user_id);
-    delete broadcasterStats[b.user_id];
-    try { await persistBroadcasterDelete(b.user_id); } catch (e) { console.error('prune:', e.message); }
+    b.dormant = true; b.dormant_at = now;
+    try { await persistBroadcasterAdd(b); } catch (e) { console.error('prune:', e.message); }
   }
-  if (!USE_SB) { saveJson(CONFIG_FILE, config); saveJson(STATS_FILE, broadcasterStats); }
-  return { removed: drop.length };
+  if (!USE_SB) saveJson(CONFIG_FILE, config);
+  return { slept: drop.length };
 }
 
 // ---------- 監視ループ ----------
@@ -422,6 +464,7 @@ async function monitorBroadcasters() {
   try {
     for (const bc of config.broadcasters) {
       const uid = bc.user_id;
+      if (bc.dormant) continue;   // 休止中は監視しない（データは保持）
       if (!broadcasterStats[uid]) broadcasterStats[uid] = { user_id: uid, current_broadcast: null, history: [] };
 
       const wasLive = !!broadcasterStats[uid].current_broadcast;
@@ -485,7 +528,8 @@ const server = http.createServer((req, res) => {
       ok: true,
       storage: USE_SB ? 'supabase' : 'local',
       official_api: USE_TC_API,
-      auto_slots: `${config.broadcasters.filter(b => b.auto).length}/${AUTO_LIMIT}`,
+      auto_slots: `${config.broadcasters.filter(b => b.auto && !b.dormant).length}/${AUTO_LIMIT}`,
+      dormant: config.broadcasters.filter(b => b.dormant).length,
       broadcasters: config.broadcasters.length,
       live: config.broadcasters.filter(b => broadcasterStats[b.user_id]?.current_broadcast).length,
       time: new Date().toISOString()
@@ -514,6 +558,22 @@ const server = http.createServer((req, res) => {
       const r = await discoverTopLives();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(r, null, 2));
+    })();
+    return;
+  }
+
+  // 休止解除: POST /api/wake/<user_id>
+  if (pathname.startsWith('/api/wake/') && req.method === 'POST') {
+    (async () => {
+      const uid = decodeURIComponent(pathname.replace('/api/wake/', ''));
+      const b = config.broadcasters.find(x => x.user_id === uid);
+      if (b) {
+        b.dormant = false; b.dormant_at = null;
+        try { await persistBroadcasterAdd(b); } catch (e) {}
+        if (!USE_SB) saveJson(CONFIG_FILE, config);
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: !!b }));
     })();
     return;
   }
@@ -594,7 +654,7 @@ const server = http.createServer((req, res) => {
         const info = await fetchUserInfo(uid);
         if (!info) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: `ユーザーが見つかりません: ${uid}` })); return; }
 
-        const b = { user_id: uid, name: info.name, image: info.image, pinned: true, auto: false, best_peak: 0 };
+        const b = { user_id: uid, name: info.name, image: info.image, pinned: true, auto: false, dormant: false, best_peak: 0 };
         config.broadcasters.push(b);
         broadcasterStats[uid] = { user_id: uid, current_broadcast: null, history: [] };
         await persistBroadcasterAdd(b);
