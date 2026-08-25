@@ -149,15 +149,13 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
         <div class="bigl">全体平均同接（最新日）</div>
         <div class="bigv" id="heroVal">—</div>
       </div>
+      <div>
+        <div class="bigl" style="color:#2ee6a8">総来場者（最新日）</div>
+        <div class="bigv" id="heroVal2" style="font-size:38px;color:#2ee6a8">—</div>
+      </div>
       <div class="deltas" id="deltas"></div>
     </div>
     <div class="ctrl">
-      <div class="seg" id="metric">
-        <button data-k="overall_avg" class="on">平均同接</button>
-        <button data-k="overall_avg_peak">平均ピーク</button>
-        <button data-k="overall_total_viewers">総来場者</button>
-        <button data-k="broadcasts">配信数</button>
-      </div>
       <div class="seg" id="range">
         <button data-k="30">30日</button>
         <button data-k="90" class="on">90日</button>
@@ -203,7 +201,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
 const API=location.origin+'/api';
 let config={broadcasters:[]},stats={},overall=[];
 let oChart=null,dChart=null,openUid=null;
-let metric='overall_avg',range=90,listSort='recent',listFilter='active';
+let range=90,listSort='recent',listFilter='active';
 const PH='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2260%22 height=%2260%22%3E%3Crect fill=%22%231b2233%22 width=%2260%22 height=%2260%22/%3E%3C/svg%3E';
 const METRIC_LABEL={overall_avg:'全体平均同接',overall_avg_peak:'全体平均ピーク',
   overall_total_viewers:'総来場者',broadcasts:'配信数'};
@@ -321,53 +319,56 @@ function renderOverall(){
   let rows=[...overall];
   if(range>0)rows=rows.slice(-range);
 
-  const key=metric;
-  const vals=rows.map(r=>Number(r[key]||0));
-  const cur=rows.length?vals[vals.length-1]:null;
-  document.getElementById('heroVal').textContent=fmt(cur);
-  document.querySelector('.bigl').textContent=METRIC_LABEL[key]+'（最新日）';
+  const avgs=rows.map(r=>Number(r.overall_avg||0));
+  const tots=rows.map(r=>Number(r.overall_total_viewers||0));
+  document.getElementById('heroVal').textContent=fmt(avgs.length?avgs[avgs.length-1]:null);
+  document.getElementById('heroVal2').textContent=fmt(tots.length?tots[tots.length-1]:null);
 
-  // 比較
   const cmp=(days,label)=>{
-    const all=overall.map(r=>Number(r[key]||0));
+    const all=overall.map(r=>Number(r.overall_avg||0));
     if(all.length<2)return`<div class="dl"><div class="l">${label}</div><div class="v flat">—</div></div>`;
-    const recent=mean(all.slice(-days));
-    const prev=mean(all.slice(-days*2,-days));
+    const recent=mean(all.slice(-days)),prev=mean(all.slice(-days*2,-days));
     if(prev==null||!prev)return`<div class="dl"><div class="l">${label}</div><div class="v flat">—</div></div>`;
     const p=Math.round((recent-prev)/prev*100);
     const cls=p>0?'up':p<0?'down':'flat';
-    return`<div class="dl"><div class="l">${label}</div>
+    return`<div class="dl"><div class="l">平均同接 ${label}</div>
       <div class="v ${cls}">${p>0?'▲ +':p<0?'▼ ':'± '}${Math.abs(p)}%</div></div>`;
   };
-  document.getElementById('deltas').innerHTML=
-    cmp(1,'前日比')+cmp(7,'先週比')+cmp(30,'先月比');
+  document.getElementById('deltas').innerHTML=cmp(1,'前日')+cmp(7,'先週')+cmp(30,'先月');
 
-  document.getElementById('note').textContent = rows.length
+  document.getElementById('note').textContent=rows.length
     ? `${rows[0].day} 〜 ${rows[rows.length-1].day}／${rows.length}日分・のべ${rows.reduce((t,r)=>t+Number(r.broadcasts||0),0).toLocaleString('ja-JP')}配信を集計`
     : 'まだ集計できるデータがありません。「過去取込」を押すと一気に貯まります。';
 
-  const color=key==='overall_total_viewers'?'#2ee6a8':key==='broadcasts'?'#ffb340':'#5b8cff';
   if(oChart)oChart.destroy();
   oChart=new Chart(document.getElementById('overall'),{type:'line',
-    data:{labels:rows.map(r=>r.day),datasets:[{label:METRIC_LABEL[key],data:vals,...lineStyle(color)}]},
+    data:{labels:rows.map(r=>r.day),datasets:[
+      {label:'全体平均同接',data:avgs,...lineStyle('#5b8cff'),yAxisID:'y'},
+      {label:'総来場者',data:tots,...lineStyle('#2ee6a8',{fill:false}),yAxisID:'y1'}
+    ]},
     options:{responsive:true,maintainAspectRatio:false,...NOANIM,
       layout:{padding:{top:8,right:12,left:2,bottom:2}},
       interaction:{mode:'index',intersect:false},
-      plugins:{legend:{display:false},
+      plugins:{legend:{display:true,position:'top',align:'end',
+          labels:{color:'#8b95ad',boxWidth:8,boxHeight:8,usePointStyle:true,pointStyle:'circle',
+            font:{size:11},padding:14}},
         tooltip:{...TIP,callbacks:{
           title:it=>dayJp(rows[it[0].dataIndex].day),
-          label:it=>{const r=rows[it.dataIndex];return[
-            ` 全体平均同接   ${fmt(r.overall_avg)}`,
-            ` 全体平均ピーク ${fmt(r.overall_avg_peak)}`,
-            ` 総来場者       ${fmt(r.overall_total_viewers)}`,
-            ` 配信数         ${fmt(r.broadcasts)}`,
-            ` 配信者数       ${fmt(r.broadcasters)}`,
-            ` その日の最高   ${fmt(r.day_max_peak)}`];}}}},
-      scales:{x:{...AXIS.x,ticks:{...AXIS.x.ticks,callback:function(v){
-          const d=this.getLabelForValue(v);if(!d)return'';
-          const x=new Date(d+'T00:00:00+09:00');return`${x.getMonth()+1}/${x.getDate()}`;}}},
-        y:AXIS.y}}});
-  oChart.$pulse=[0];
+          label:it=>{if(it.datasetIndex)return null;const r=rows[it.dataIndex];return[
+            ` 全体平均同接 ${fmt(r.overall_avg)}`,
+            ` 総来場者     ${fmt(r.overall_total_viewers)}`,
+            ` 配信者数     ${fmt(r.broadcasters)}`,
+            ` その日の最高 ${fmt(r.day_max_peak)}`];}}}},
+      scales:{
+        x:{...AXIS.x,ticks:{...AXIS.x.ticks,callback:function(v){
+            const d=this.getLabelForValue(v);if(!d)return'';
+            const x=new Date(d+'T00:00:00+09:00');return`${x.getMonth()+1}/${x.getDate()}`;}}},
+        y:{...AXIS.y,position:'left',ticks:{...AXIS.y.ticks,color:'#8fb0ff'}},
+        y1:{...AXIS.y,position:'right',grid:{display:false},
+            ticks:{...AXIS.y.ticks,color:'#7fe6c4',
+              callback:v=>v>=10000?(v/10000)+'万':v.toLocaleString('ja-JP')}}
+      }}});
+  oChart.$pulse=[0,1];
 }
 
 function renderStats(){
@@ -379,8 +380,8 @@ function renderStats(){
   document.getElementById('stats3').innerHTML=`
     <div class="st"><div class="l">いま配信中の平均同接</div><div class="v" style="color:var(--live)">${fmt(curAvg)}</div></div>
     <div class="st"><div class="l">いま配信中の合計同接</div><div class="v">${fmt(curSum)}</div></div>
-    <div class="st"><div class="l">最新日の配信数</div><div class="v">${fmt(last&&last.broadcasts)}</div></div>
     <div class="st"><div class="l">最新日の配信者数</div><div class="v">${fmt(last&&last.broadcasters)}</div></div>
+    <div class="st"><div class="l">最新日の総来場者</div><div class="v">${fmt(last&&last.overall_total_viewers)}</div></div>
     <div class="st"><div class="l">全期間の平均</div><div class="v">${fmt(mean(allDays))}</div></div>
     <div class="st"><div class="l">集計日数</div><div class="v">${overall.length}</div></div>`;
 }
@@ -528,13 +529,34 @@ async function discover(){
     showErr(`${(j.added||[]).length}人追加／${(j.slept||[]).length}人休止（枠 ${j.auto_slots}）`);
     await loadAll();}catch(e){showErr('自動収集エラー: '+e.message);}
 }
+let bfTimer=null;
 async function backfill(){
-  if(!confirm('登録中の全配信者の過去配信を取り込みます。人数が多いと数分かかります。'))return;
-  showErr('取り込み中…（完了までこのページを閉じないでください）');
-  try{const r=await fetch(API+'/backfill',{method:'POST'});const j=await r.json();
-    const n=Object.values(j).reduce((t,x)=>t+(x.imported||0),0);
-    showErr(`${n}件の過去配信を取り込みました`);await loadAll();}catch(e){showErr('取込エラー: '+e.message);}
+  if(!confirm('登録中の全配信者の過去配信を取り込みます。サーバー側で実行されるので、このページを閉じても続行します。'))return;
+  try{
+    const r=await fetch(API+'/backfill',{method:'POST'});
+    const j=await r.json();
+    if(!j.started&&j.reason==='already_running') showErr('すでに取り込み中です');
+    pollBackfill();
+  }catch(e){showErr('取込エラー: '+e.message);}
 }
+async function pollBackfill(){
+  if(bfTimer)clearInterval(bfTimer);
+  const tick=async()=>{
+    try{
+      const j=await fetch(API+'/backfill/status').then(r=>r.json());
+      if(j.running){
+        showErrPersist(`過去配信を取込中… ${j.done}/${j.totalTargets}人・${j.imported}件`);
+      }else{
+        clearInterval(bfTimer);bfTimer=null;
+        if(j.finishedAt){showErr(`取込完了：${j.imported}件`);await loadAll();}
+        else{const e=document.getElementById('err');if(e)e.innerHTML='';}
+      }
+    }catch(e){clearInterval(bfTimer);bfTimer=null;}
+  };
+  await tick();
+  bfTimer=setInterval(tick,2000);
+}
+function showErrPersist(m){document.getElementById('err').innerHTML=`<div class="err">${esc(m)}</div>`;}
 function exportData(){
   const blob=new Blob([JSON.stringify({overall,config,stats},null,2)],{type:'application/json'});
   const u=URL.createObjectURL(blob),a=document.createElement('a');
@@ -546,7 +568,6 @@ function showErr(m){document.getElementById('err').innerHTML=`<div class="err">$
 function bindSeg(id,cb){document.getElementById(id).addEventListener('click',e=>{
   const b=e.target.closest('button');if(!b)return;
   [...b.parentNode.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');cb(b.dataset.k);});}
-bindSeg('metric',k=>{metric=k;renderOverall();});
 bindSeg('range',k=>{range=Number(k);renderOverall();});
 bindSeg('listSort',k=>{listSort=k;renderTable();});
 bindSeg('listFilter',k=>{listFilter=k;renderTable();});
@@ -556,6 +577,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
 
 loadAll();
 setInterval(loadAll,10000);
+fetch(API+'/backfill/status').then(r=>r.json()).then(j=>{if(j.running)pollBackfill();}).catch(()=>{});
 </script>
 </body>
 </html>
