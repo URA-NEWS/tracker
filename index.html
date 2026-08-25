@@ -174,9 +174,16 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
     <span class="sub">クリックでその人の日別平均</span>
     <span class="sp"></span>
     <div class="seg" id="listSort">
-      <button data-k="recent" class="on">直近平均順</button>
-      <button data-k="pct">伸び率順</button>
+      <button data-k="pct" class="on">上昇率順</button>
+      <button data-k="pctAsc">下落率順</button>
+      <button data-k="recent">直近平均順</button>
+      <button data-k="all">通算平均順</button>
       <button data-k="name">名前順</button>
+    </div>
+    <div class="seg" id="trendBase">
+      <button data-k="b5" class="on">直近5配信</button>
+      <button data-k="d7">7日</button>
+      <button data-k="d30">30日</button>
     </div>
     <div class="seg" id="listFilter">
       <button data-k="active" class="on">稼働中</button>
@@ -202,7 +209,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
 const API=location.origin+'/api';
 let config={broadcasters:[]},stats={},overall=[];
 let oChart=null,dChart=null,openUid=null;
-let range=90,listSort='recent',listFilter='active';
+let range=90,listSort='pct',listFilter='active',trendBase='b5';
 const PH='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2260%22 height=%2260%22%3E%3Crect fill=%22%231b2233%22 width=%2260%22 height=%2260%22/%3E%3C/svg%3E';
 const METRIC_LABEL={overall_avg:'全体平均同接',overall_avg_peak:'全体平均ピーク',
   overall_total_viewers:'総来場者',broadcasts:'配信数'};
@@ -289,6 +296,26 @@ function dailyOf(bs){
   bs.forEach(x=>{const k=new Date(x.t+9*3600e3).toISOString().slice(0,10);
     (m[k]=m[k]||[]).push(valOf(x));});
   return Object.keys(m).sort().map(k=>({day:k,val:mean(m[k]),n:m[k].length}));
+}
+// 日数ベース: 直近N日の平均 vs その前N日の平均
+function trendDays(bs,days){
+  const daily=dailyOf(bs);
+  if(daily.length<2)return null;
+  const today=new Date();today.setHours(0,0,0,0);
+  const dayKey=d=>new Date(d.getTime()+9*3600e3).toISOString().slice(0,10);
+  const cut1=new Date(today.getTime()-days*864e5), cut2=new Date(today.getTime()-days*2*864e5);
+  const k1=dayKey(cut1),k2=dayKey(cut2);
+  const recent=daily.filter(d=>d.day>k1).map(d=>d.val);
+  const prev=daily.filter(d=>d.day>k2&&d.day<=k1).map(d=>d.val);
+  if(!recent.length||!prev.length)return null;
+  const r=mean(recent),p=mean(prev);
+  if(!p)return null;
+  return{recent:r,prev:p,pct:Math.round((r-p)/p*100),n:days,unit:'日',count:daily.length};
+}
+function trendBy(bs){
+  if(trendBase==='d7')return trendDays(bs,7);
+  if(trendBase==='d30')return trendDays(bs,30);
+  return trendOf(bs);
 }
 function trendOf(bs){
   const done=bs.filter(x=>!x.live);if(done.length<2)return null;
@@ -407,7 +434,7 @@ function renderStats(){
 /* ===== 個別リスト ===== */
 function renderTable(){
   let rows=config.broadcasters.map(b=>{
-    const st=stats[b.user_id],bs=broadcastsOf(st),tr=trendOf(bs),l=latest(st);
+    const st=stats[b.user_id],bs=broadcastsOf(st),tr=trendBy(bs),l=latest(st);
     return{b,bs,tr,live:isLive(st),
       recent:tr?tr.recent:(bs.length?valOf(bs[bs.length-1]):null),
       cur:l?l.concurrent:null,
@@ -421,14 +448,19 @@ function renderTable(){
   }
   rows.sort((a,b)=>{
     if(listSort==='name')return String(a.b.name).localeCompare(String(b.b.name),'ja');
-    if(listSort==='pct')return (b.tr?b.tr.pct:-9999)-(a.tr?a.tr.pct:-9999);
-    return (b.recent||0)-(a.recent||0);
+    if(listSort==='all')return (b.all||0)-(a.all||0);
+    if(listSort==='recent')return (b.recent||0)-(a.recent||0);
+    const ap=a.tr?a.tr.pct:null, bp=b.tr?b.tr.pct:null;
+    if(ap==null&&bp==null)return (b.recent||0)-(a.recent||0);
+    if(ap==null)return 1;
+    if(bp==null)return -1;
+    return listSort==='pctAsc'? ap-bp : bp-ap;
   });
 
   const hd=`<div class="thd"><span></span><span></span><span>配信者</span>
     <span style="text-align:right">直近平均</span>
+    <span style="text-align:right" class="hidesm">比較元</span>
     <span style="text-align:right" class="hidesm">通算平均</span>
-    <span style="text-align:right" class="hidesm">配信数</span>
     <span style="text-align:right">増減</span><span></span></div>`;
 
   const body=rows.length?rows.map((r,i)=>{
@@ -444,9 +476,9 @@ function renderTable(){
           <span class="tag ${r.b.pinned?'pin':''}">${r.b.pinned?'手動':'自動'}</span>
           ${r.b.dormant?'<span class="tag dor">休止</span>':''}</div>
       </div>
-      <div class="v2">${fmt(r.recent)}<small>直近${r.tr?r.tr.n:1}配信</small></div>
-      <div class="v2 hidesm">${fmt(r.all)}<small>通算</small></div>
-      <div class="v2 hidesm">${r.bs.length}<small>配信</small></div>
+      <div class="v2">${fmt(r.recent)}<small>${r.tr?(r.tr.unit?'直近'+r.tr.n+'日':'直近'+r.tr.n+'配信'):'直近'}</small></div>
+      <div class="v2 hidesm">${r.tr?fmt(r.tr.prev):'—'}<small>${r.tr?(r.tr.unit?'前'+r.tr.n+'日':'前'+r.tr.n+'配信'):'比較元'}</small></div>
+      <div class="v2 hidesm">${fmt(r.all)}<small>通算(${r.bs.length}配信)</small></div>
       <div class="pct ${cls}">${pct}</div>
       <div class="acts2">
         ${r.b.dormant?`<button class="iconbtn" onclick="event.stopPropagation();wake('${esc(r.b.user_id)}')" title="再開">▶</button>`:''}
@@ -464,7 +496,7 @@ function closeModal(){openUid=null;document.getElementById('mask').classList.rem
 
 function renderModal(uid){
   const b=config.broadcasters.find(x=>x.user_id===uid);if(!b)return closeModal();
-  const st=stats[uid],live=isLive(st),bs=broadcastsOf(st),tr=trendOf(bs),l=latest(st);
+  const st=stats[uid],live=isLive(st),bs=broadcastsOf(st),tr=trendBy(bs),l=latest(st);
   const daily=dailyOf(bs);
   const peak=bs.length?Math.max(...bs.map(x=>x.peak)):null;
 
@@ -605,6 +637,7 @@ function bindSeg(id,cb){document.getElementById(id).addEventListener('click',e=>
   [...b.parentNode.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');cb(b.dataset.k);});}
 bindSeg('range',k=>{range=Number(k);renderOverall();});
 bindSeg('listSort',k=>{listSort=k;renderTable();});
+bindSeg('trendBase',k=>{trendBase=k;renderTable();if(openUid)renderModal(openUid);});
 bindSeg('listFilter',k=>{listFilter=k;renderTable();});
 
 document.getElementById('inp').addEventListener('keydown',e=>{if(e.key==='Enter')addBroadcaster();});
