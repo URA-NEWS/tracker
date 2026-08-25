@@ -135,7 +135,8 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
       <span class="chip" id="chip">—</span>
       <span id="lastUpdate">—</span>
       <button class="btn ghost" onclick="discover()">自動収集</button>
-      <button class="btn ghost" onclick="backfill()">過去取込</button>
+      <button class="btn ghost" onclick="backfillMissing()">未取込を補完</button>
+      <button class="btn ghost" onclick="backfill()">過去取込（全員）</button>
       <button class="btn ghost" onclick="exportData()">出力</button>
     </div>
   </div>
@@ -211,6 +212,16 @@ const fmt=n=>(n==null||isNaN(n))?'—':Number(n).toLocaleString('ja-JP');
 const tcUrl=u=>'https://twitcasting.tv/'+encodeURIComponent(u).replace(/%3A/gi,':');
 function withAlpha(hex,a){const h=String(hex).replace('#','');
   return `rgba(${parseInt(h.slice(0,2),16)},${parseInt(h.slice(2,4),16)},${parseInt(h.slice(4,6),16)},${a})`;}
+function movingAvg(arr,win){
+  const out=[];
+  for(let i=0;i<arr.length;i++){
+    const s=Math.max(0,i-win+1);
+    const seg=arr.slice(s,i+1).filter(v=>v!=null&&!isNaN(v));
+    out.push(seg.length?Math.round(seg.reduce((t,v)=>t+v,0)/seg.length):null);
+  }
+  return out;
+}
+const winFor=n=>n<=31?3:n<=95?7:n<=200?14:30;
 const mean=a=>a.length?Math.round(a.reduce((t,v)=>t+v,0)/a.length):null;
 const dayJp=d=>{const x=new Date(d+'T00:00:00+09:00');
   return `${x.getMonth()+1}/${x.getDate()}(${'日月火水木金土'[x.getDay()]})`;};
@@ -340,25 +351,38 @@ function renderOverall(){
     ? `${rows[0].day} 〜 ${rows[rows.length-1].day}／${rows.length}日分・のべ${rows.reduce((t,r)=>t+Number(r.broadcasts||0),0).toLocaleString('ja-JP')}配信を集計`
     : 'まだ集計できるデータがありません。「過去取込」を押すと一気に貯まります。';
 
+  const win=winFor(rows.length);
+  const avgMA=movingAvg(avgs,win), totMA=movingAvg(tots,win);
+  const many=rows.length>45;
+
   if(oChart)oChart.destroy();
   oChart=new Chart(document.getElementById('overall'),{type:'line',
     data:{labels:rows.map(r=>r.day),datasets:[
-      {label:'全体平均同接',data:avgs,...lineStyle('#5b8cff'),yAxisID:'y'},
-      {label:'総来場者',data:tots,...lineStyle('#2ee6a8',{fill:false}),yAxisID:'y1'}
+      {label:`平均同接（${win}日移動平均）`,data:avgMA,...lineStyle('#5b8cff'),
+       borderWidth:3,pointRadius:many?0:4,pointHoverRadius:7,yAxisID:'y',order:1},
+      {label:'平均同接（日次）',data:avgs,borderColor:withAlpha('#5b8cff',.30),
+       backgroundColor:'transparent',fill:false,borderWidth:1,tension:.3,
+       pointRadius:0,pointHoverRadius:0,pointHitRadius:0,yAxisID:'y',order:4},
+      {label:`総来場者（${win}日移動平均）`,data:totMA,...lineStyle('#2ee6a8',{fill:false}),
+       borderWidth:2.6,pointRadius:many?0:4,pointHoverRadius:7,yAxisID:'y1',order:2},
+      {label:'総来場者（日次）',data:tots,borderColor:withAlpha('#2ee6a8',.24),
+       backgroundColor:'transparent',fill:false,borderWidth:1,tension:.3,
+       pointRadius:0,pointHoverRadius:0,pointHitRadius:0,yAxisID:'y1',order:5}
     ]},
     options:{responsive:true,maintainAspectRatio:false,...NOANIM,
       layout:{padding:{top:8,right:12,left:2,bottom:2}},
       interaction:{mode:'index',intersect:false},
       plugins:{legend:{display:true,position:'top',align:'end',
           labels:{color:'#8b95ad',boxWidth:8,boxHeight:8,usePointStyle:true,pointStyle:'circle',
-            font:{size:11},padding:14}},
+            font:{size:10.5},padding:12,filter:it=>it.datasetIndex<2||it.datasetIndex===2}},
         tooltip:{...TIP,callbacks:{
           title:it=>dayJp(rows[it[0].dataIndex].day),
-          label:it=>{if(it.datasetIndex)return null;const r=rows[it.dataIndex];return[
-            ` 全体平均同接 ${fmt(r.overall_avg)}`,
-            ` 総来場者     ${fmt(r.overall_total_viewers)}`,
-            ` 配信者数     ${fmt(r.broadcasters)}`,
-            ` その日の最高 ${fmt(r.day_max_peak)}`];}}}},
+          label:it=>{if(it.datasetIndex)return null;const i=it.dataIndex,r=rows[i];return[
+            ` 平均同接（日）  ${fmt(r.overall_avg)}`,
+            ` 平均同接（${win}日）${fmt(avgMA[i])}`,
+            ` 総来場者（日）  ${fmt(r.overall_total_viewers)}`,
+            ` 配信者数        ${fmt(r.broadcasters)}`,
+            ` その日の最高    ${fmt(r.day_max_peak)}`];}}}},
       scales:{
         x:{...AXIS.x,ticks:{...AXIS.x.ticks,callback:function(v){
             const d=this.getLabelForValue(v);if(!d)return'';
@@ -484,17 +508,27 @@ function renderModal(uid){
 
   if(dChart){dChart.destroy();dChart=null;}
   if(daily.length){
+    const dv=daily.map(d=>d.val);
+    const win=winFor(daily.length);
+    const ma=movingAvg(dv,win);
+    const many=daily.length>45;
     dChart=new Chart(document.getElementById('dc'),{type:'line',
-      data:{labels:daily.map(d=>d.day),
-        datasets:[{label:'日別平均同接',data:daily.map(d=>d.val),...lineStyle('#ff3b5c')}]},
+      data:{labels:daily.map(d=>d.day),datasets:[
+        {label:`${win}日移動平均`,data:ma,...lineStyle('#ff3b5c'),
+         borderWidth:3,pointRadius:many?0:4,pointHoverRadius:7,order:1},
+        {label:'日次',data:dv,borderColor:withAlpha('#ff3b5c',.28),backgroundColor:'transparent',
+         fill:false,borderWidth:1,tension:.3,pointRadius:0,pointHoverRadius:0,pointHitRadius:0,order:3}
+      ]},
       options:{responsive:true,maintainAspectRatio:false,...NOANIM,
         layout:{padding:{top:8,right:10,left:2,bottom:2}},
         interaction:{mode:'index',intersect:false},
-        plugins:{legend:{display:false},
+        plugins:{legend:{display:true,position:'top',align:'end',
+            labels:{color:'#8b95ad',boxWidth:8,boxHeight:8,usePointStyle:true,pointStyle:'circle',
+              font:{size:10.5},padding:12}},
           tooltip:{...TIP,callbacks:{
             title:it=>dayJp(daily[it[0].dataIndex].day),
-            label:it=>{const d=daily[it.dataIndex];
-              return[` 平均同接 ${fmt(d.val)}`,` 配信数   ${d.n}`];}}}},
+            label:it=>{if(it.datasetIndex)return null;const i=it.dataIndex,d=daily[i];
+              return[` 日次平均   ${fmt(d.val)}`,` ${win}日移動平均 ${fmt(ma[i])}`,` 配信数     ${d.n}`];}}}},
         scales:{x:{...AXIS.x,ticks:{...AXIS.x.ticks,callback:function(v){
             const d=this.getLabelForValue(v);if(!d)return'';
             const x=new Date(d+'T00:00:00+09:00');return`${x.getMonth()+1}/${x.getDate()}`;}}},
@@ -530,6 +564,15 @@ async function discover(){
     await loadAll();}catch(e){showErr('自動収集エラー: '+e.message);}
 }
 let bfTimer=null;
+async function backfillMissing(){
+  try{
+    const r=await fetch(API+'/backfill-missing',{method:'POST'});
+    const j=await r.json();
+    if(j.reason==='nothing_to_do'){showErr('未取込の配信者はいません');return;}
+    if(j.reason==='already_running'){showErr('すでに取り込み中です');}
+    pollBackfill();
+  }catch(e){showErr('エラー: '+e.message);}
+}
 async function backfill(){
   if(!confirm('登録中の全配信者の過去配信を取り込みます。サーバー側で実行されるので、このページを閉じても続行します。'))return;
   try{
