@@ -274,6 +274,28 @@ async function fetchBroadcastStats(userId) {
 }
 
 // ---------- 過去配信の取り込み ----------
+const backfillJob = { running: false, done: 0, totalTargets: 0, imported: 0, current: null, finishedAt: null, error: null };
+
+async function runBackfillJob(targets) {
+  if (backfillJob.running) return;
+  backfillJob.running = true;
+  backfillJob.done = 0; backfillJob.imported = 0; backfillJob.error = null;
+  backfillJob.totalTargets = targets.length; backfillJob.finishedAt = null;
+  console.log(`[backfill] 開始 ${targets.length}人`);
+  for (const uid of targets) {
+    backfillJob.current = uid;
+    try {
+      const r = await backfillUser(uid);
+      if (r.ok) backfillJob.imported += r.imported || 0;
+    } catch (e) { backfillJob.error = e.message; }
+    backfillJob.done++;
+  }
+  backfillJob.current = null;
+  backfillJob.running = false;
+  backfillJob.finishedAt = new Date().toISOString();
+  console.log(`[backfill] 完了 ${backfillJob.imported}件`);
+}
+
 async function backfillUser(userId, maxMovies = 500) {
   if (!USE_TC_API) return { ok: false, reason: 'no_credentials' };
   let offset = 0, imported = 0, scanned = 0, totalCount = null;
@@ -642,16 +664,25 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 過去配信の取り込み: POST /api/backfill  または /api/backfill/<user_id>
+  // 取り込み状況: GET /api/backfill/status
+  if (pathname === '/api/backfill/status' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(backfillJob));
+    return;
+  }
+
+  // 過去配信の取り込み（バックグラウンド実行）: POST /api/backfill[/<user_id>]
   if (pathname.startsWith('/api/backfill') && req.method === 'POST') {
-    (async () => {
-      const spec = pathname.replace('/api/backfill', '').replace(/^\//, '');
-      const targets = spec ? [decodeURIComponent(spec)] : config.broadcasters.map(b => b.user_id);
-      const result = {};
-      for (const uid of targets) result[uid] = await backfillUser(uid);
+    const spec = pathname.replace('/api/backfill', '').replace(/^\//, '');
+    const targets = spec ? [decodeURIComponent(spec)] : config.broadcasters.map(b => b.user_id);
+    if (backfillJob.running) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(result, null, 2));
-    })();
+      res.end(JSON.stringify({ started: false, reason: 'already_running', job: backfillJob }));
+      return;
+    }
+    runBackfillJob(targets);
+    res.writeHead(202, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ started: true, targets: targets.length }));
     return;
   }
 
