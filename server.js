@@ -71,7 +71,7 @@ async function bootstrap() {
   }
   console.log('[storage] supabase');
   try {
-    const bcs = await sb('GET', 'tw_broadcasters', { query: '?select=user_id,name,image,pinned,auto,last_live_at,best_peak,dormant,dormant_at,platform&order=created_at.asc' });
+    const bcs = await sb('GET', 'tw_broadcasters', { query: '?select=user_id,name,image,pinned,auto,last_live_at,best_peak,dormant,dormant_at,platform,kick_slug,kick_user_id&order=created_at.asc' });
     config = { broadcasters: bcs || [] };
 
     const brs = await sb('GET', 'tw_broadcasts', { query: '?select=id,user_id,started_at,ended_at,peak,total,duration,source,platform&order=started_at.asc' });
@@ -116,7 +116,14 @@ async function bootstrap() {
 // ---------- 永続化 ----------
 async function persistBroadcasterAdd(b) {
   if (!USE_SB) { saveJson(CONFIG_FILE, config); return; }
-  await sb('POST', 'tw_broadcasters', { body: [b], prefer: 'resolution=merge-duplicates' });
+  const row = {
+    user_id: b.user_id, name: b.name ?? null, image: b.image ?? null,
+    pinned: !!b.pinned, auto: !!b.auto, dormant: !!b.dormant,
+    dormant_at: b.dormant_at ?? null, last_live_at: b.last_live_at ?? null,
+    best_peak: Number(b.best_peak || 0), platform: b.platform || 'twitcasting',
+    kick_slug: b.kick_slug ?? null, kick_user_id: b.kick_user_id ?? null
+  };
+  await sb('POST', 'tw_broadcasters', { body: [row], prefer: 'resolution=merge-duplicates' });
 }
 async function persistBroadcasterDelete(uid) {
   if (!USE_SB) { saveJson(CONFIG_FILE, config); saveJson(STATS_FILE, broadcasterStats); return; }
@@ -288,7 +295,6 @@ const backfillJob = { running: false, done: 0, totalTargets: 0, imported: 0, cur
 function findMissingArchive() {
   return config.broadcasters
     .filter(b => {
-      if (b.platform === 'kick') return false;
       const st = broadcasterStats[b.user_id];
       if (!st) return true;
       return !(st.history || []).some(h => h.source === 'archive');
@@ -325,7 +331,10 @@ async function runBackfillJob(targets) {
 }
 
 async function backfillUser(userId, maxMovies = 500) {
-  if (isKick(userId)) return { ok: true, imported: 0, skipped: 'kick_no_history' };
+  if (isKick(userId)) {
+    const b = config.broadcasters.find(x => x.user_id === userId);
+    return b ? await backfillKick(b) : { ok: false, reason: 'not_found', imported: 0 };
+  }
   if (!USE_TC_API) return { ok: false, reason: 'no_credentials' };
   let offset = 0, imported = 0, scanned = 0, totalCount = null;
 
@@ -433,15 +442,20 @@ async function fetchKickLiveList() {
       const j = await r.json();
       const data = (j && j.data) || [];
       if (data.length) {
-        return data.map(x => ({
-          slug: x.slug,
-          user_id: KICK_PREFIX + x.slug,
-          name: x.channel_name || x.slug,
-          image: x.thumbnail || null,
-          viewers: Number(x.viewer_count || 0),
-          started_at: x.started_at || null,
-          language: x.language || null
-        }));
+        return data.map(x => {
+          const cslug = x.channel_slug || x.slug;
+          return {
+            slug: cslug,
+            channel_slug: x.channel_slug || null,
+            broadcaster_user_id: x.broadcaster_user_id ?? null,
+            user_id: KICK_PREFIX + cslug,
+            name: x.channel_name || x.slug || cslug,
+            image: x.thumbnail || null,
+            viewers: Number(x.viewer_count || 0),
+            started_at: x.started_at || null,
+            language: x.language || null
+          };
+        });
       }
     } catch (e) { /* next */ }
   }
@@ -476,6 +490,94 @@ async function fetchKickChannel(slug) {
   } catch (e) { return null; }
 }
 
+// broadcaster_user_id から正しいチャンネルスラッグを解決
+async function resolveKickSlug(b) {
+  if (b.kick_slug) return b.kick_slug;
+  const cand = kickSlug(b.user_id);
+
+  // 1) 非公開APIで直接当たるか
+  try {
+    const r = await fetch(`https://kick.com/api/v2/channels/${encodeURIComponent(cand)}`, { headers: KICK_HDRS });
+    if (r.ok) { b.kick_slug = cand; return cand; }
+  } catch (e) {}
+
+  // 2) 公式APIで broadcaster_user_id から引く
+  const uid = b.kick_user_id;
+  if (uid) {
+    const tok = await getKickToken();
+    if (tok) {
+      try {
+        const r = await fetch(`https://api.kick.com/public/v1/channels?broadcaster_user_id=${uid}`, {
+          headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' }
+        });
+        if (r.ok) {
+          const j = await r.json();
+          const c = (j && j.data && j.data[0]) || null;
+          if (c && c.slug) { b.kick_slug = c.slug; return c.slug; }
+        }
+      } catch (e) {}
+    }
+  }
+  return null;
+}
+
+// Kick の過去配信を取り込む（非公開API）
+async function backfillKick(b) {
+  const slug = await resolveKickSlug(b);
+  if (!slug) return { ok: false, reason: 'slug_unresolved', imported: 0 };
+
+  let vids = [];
+  try {
+    const r = await fetch(`https://kick.com/api/v2/channels/${encodeURIComponent(slug)}/videos`, { headers: KICK_HDRS });
+    if (!r.ok) return { ok: false, reason: `status_${r.status}`, imported: 0 };
+    const j = await r.json();
+    vids = Array.isArray(j) ? j : (j.data || []);
+  } catch (e) { return { ok: false, reason: e.message, imported: 0 }; }
+
+  const uid = b.user_id;
+  if (!broadcasterStats[uid]) broadcasterStats[uid] = { user_id: uid, current_broadcast: null, history: [] };
+
+  const rows = [];
+  for (const v of vids) {
+    const ls = v.livestream || v;
+    const startedRaw = ls.start_time || v.created_at || ls.created_at;
+    if (!startedRaw) continue;
+    const startedMs = new Date(String(startedRaw).replace(' ', 'T') + (String(startedRaw).endsWith('Z') ? '' : 'Z')).getTime();
+    if (!startedMs || isNaN(startedMs)) continue;
+    const durMs = Number(v.duration || ls.duration || 0);
+    const peak = Number(ls.viewer_count ?? v.viewer_count ?? 0);
+    const total = Number(v.views ?? v.view_count ?? ls.views ?? 0);
+    if (!peak && !total) continue;
+
+    const id = `karc_${uid}_${v.id || ls.id}`;
+    if (broadcasterStats[uid].history.some(h => h.broadcast_id === id)) continue;
+
+    const obj = {
+      broadcast_id: id,
+      started_at: new Date(startedMs).toISOString(),
+      ended_at: new Date(startedMs + durMs).toISOString(),
+      source: 'archive', platform: 'kick',
+      peak, total_final: total, duration: Math.round(durMs / 1000),
+      samples: []
+    };
+    broadcasterStats[uid].history.push(obj);
+    rows.push({
+      id, user_id: uid, started_at: obj.started_at, ended_at: obj.ended_at,
+      peak, total, duration: obj.duration, source: 'archive', platform: 'kick'
+    });
+    if (peak > (b.best_peak || 0)) b.best_peak = peak;
+  }
+
+  if (rows.length && USE_SB) {
+    try { await sb('POST', 'tw_broadcasts', { body: rows, prefer: 'resolution=merge-duplicates' }); }
+    catch (e) { console.error('kick backfill upsert:', e.message); }
+  }
+  try { await persistBroadcasterAdd(b); } catch (e) {}
+  broadcasterStats[uid].history.sort((a, c) => new Date(a.started_at) - new Date(c.started_at));
+  if (!USE_SB) saveJson(STATS_FILE, broadcasterStats);
+  return { ok: true, imported: rows.length, slug };
+}
+
 // Kick の自動収集（同接上位・日本語）
 async function discoverKick() {
   if (!USE_KICK) return { ok: false, reason: 'no_credentials' };
@@ -483,7 +585,7 @@ async function discoverKick() {
   if (!list || !list.length) return { ok: true, added: [], slept: [], auto_slots: '0/' + KICK_LIMIT, candidates: 0 };
 
   const byId = new Map(config.broadcasters.map(b => [b.user_id, b]));
-  const added = [], slept = [], now = new Date().toISOString();
+  const added = [], slept = [], kickNew = [], now = new Date().toISOString();
   const activeAutos = () => config.broadcasters.filter(b => b.auto && !b.dormant && b.platform === 'kick');
   const scoreOf = b => Number(b.best_peak || 0);
 
@@ -492,6 +594,8 @@ async function discoverKick() {
     if (ex) {
       let changed = false;
       if (c.viewers > (ex.best_peak || 0)) { ex.best_peak = c.viewers; changed = true; }
+      if (!ex.kick_user_id && c.broadcaster_user_id) { ex.kick_user_id = c.broadcaster_user_id; changed = true; }
+      if (!ex.kick_slug && c.channel_slug) { ex.kick_slug = c.channel_slug; changed = true; }
       ex.last_live_at = now;
       if (ex.dormant && ex.auto) {
         const autos = activeAutos();
@@ -512,15 +616,18 @@ async function discoverKick() {
     const b = {
       user_id: c.user_id, name: c.name, image: c.image,
       pinned: false, auto: true, dormant: false,
-      best_peak: c.viewers, last_live_at: now, platform: 'kick'
+      best_peak: c.viewers, last_live_at: now, platform: 'kick',
+      kick_slug: c.channel_slug || null, kick_user_id: c.broadcaster_user_id || null
     };
     config.broadcasters.push(b);
     byId.set(b.user_id, b);
     if (!broadcasterStats[b.user_id]) broadcasterStats[b.user_id] = { user_id: b.user_id, current_broadcast: null, history: [] };
     added.push({ user_id: b.user_id, name: b.name, viewers: c.viewers });
     try { await persistBroadcasterAdd(b); } catch (e) { console.error('kick add:', e.message); }
+    kickNew.push(b.user_id);
   }
   if (!USE_SB) saveJson(CONFIG_FILE, config);
+  if (kickNew.length && !backfillJob.running) runBackfillJob(kickNew);
   const act = activeAutos().length;
   if (added.length || slept.length) console.log(`[kick] +${added.length} 休止${slept.length} (稼働 ${act}/${KICK_LIMIT})`);
   return { ok: true, added, slept, auto_slots: `${act}/${KICK_LIMIT}`, candidates: list.length };
@@ -811,6 +918,23 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Kickのスラッグを解決し直す: POST /api/kick-resolve
+  if (pathname === '/api/kick-resolve' && req.method === 'POST') {
+    (async () => {
+      const targets = config.broadcasters.filter(b => b.platform === 'kick');
+      let ok = 0, ng = 0;
+      for (const b of targets) {
+        b.kick_slug = null;
+        const slug = await resolveKickSlug(b);
+        if (slug) { ok++; try { await persistBroadcasterAdd(b); } catch (e) {} } else ng++;
+      }
+      if (!USE_SB) saveJson(CONFIG_FILE, config);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ total: targets.length, resolved: ok, failed: ng }));
+    })();
+    return;
+  }
+
   // Kick 非公開API疎通テスト: GET /api/kick-probe/<slug>
   if (pathname.startsWith('/api/kick-probe/') && req.method === 'GET') {
     (async () => {
@@ -1018,12 +1142,13 @@ const server = http.createServer((req, res) => {
         if (!info) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: `ユーザーが見つかりません: ${uid}` })); return; }
 
         const b = { user_id: uid, name: info.name, image: info.image, pinned: true, auto: false, dormant: false, best_peak: 0, platform: plat };
+        if (plat === 'kick') b.kick_slug = kickSlug(uid);
         config.broadcasters.push(b);
         broadcasterStats[uid] = { user_id: uid, current_broadcast: null, history: [] };
         await persistBroadcasterAdd(b);
 
         monitorBroadcasters();
-        if (plat !== 'kick' && !backfillJob.running) runBackfillJob([uid]);
+        if (!backfillJob.running) runBackfillJob([uid]);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(b));
       } catch (e) {
