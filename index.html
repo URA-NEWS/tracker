@@ -94,6 +94,29 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
   .hidesm{display:none}
 }
 .empty{text-align:center;padding:44px 20px;color:var(--sub);font-size:13.5px}
+.tabs{display:inline-flex;background:var(--panel2);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:16px}
+.tabs button{background:transparent;border:0;color:var(--sub);padding:11px 20px;font-size:14px;font-weight:700;cursor:pointer}
+.tabs button.on{background:var(--accent);color:#fff}
+.hmwrap{overflow-x:auto}
+.hmg{display:grid;grid-template-columns:38px repeat(24,minmax(26px,1fr));gap:3px;min-width:760px}
+.hmg .hl{font-size:12px;color:var(--sub);display:flex;align-items:center;justify-content:flex-end;padding-right:6px;font-weight:700}
+.hmg .hh{font-size:11px;color:var(--sub);text-align:center;font-weight:600}
+.hmg .cell{aspect-ratio:1;border-radius:4px;background:#161c2b;transition:.12s}
+.hmg .cell:hover{outline:2px solid var(--accent);z-index:2}
+.hmleg{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--sub);margin-top:12px}
+.hmleg i{width:18px;height:12px;border-radius:3px;display:inline-block}
+.alert{display:flex;align-items:center;gap:12px;padding:12px 15px;background:var(--panel2);
+  border-radius:12px;margin-bottom:8px;border-left:3px solid var(--ok)}
+.alert img{width:34px;height:34px;border-radius:10px;object-fit:cover}
+.alert .a1{font-size:14px;font-weight:700}
+.alert .a2{font-size:11.5px;color:var(--sub);margin-top:2px}
+.alert .a3{margin-left:auto;font-size:18px;font-weight:800;color:var(--ok);font-variant-numeric:tabular-nums}
+.dur{display:grid;grid-template-columns:110px 1fr 92px 92px;gap:12px;align-items:center;
+  padding:11px 14px;background:var(--panel2);border-radius:11px;margin-bottom:7px;font-size:13.5px}
+.dur .bar{height:12px;background:var(--line);border-radius:6px;overflow:hidden}
+.dur .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),#8ab4ff);border-radius:6px}
+.dur .n{text-align:right;font-weight:800;font-variant-numeric:tabular-nums}
+.dur .n small{display:block;font-size:10px;color:#5f6a83;font-weight:600}
 
 /* ===== モーダル ===== */
 .mask{position:fixed;inset:0;background:rgba(5,7,12,.82);backdrop-filter:blur(6px);
@@ -141,13 +164,23 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
       <button class="btn ghost" onclick="discover()">自動収集</button>
       <span id="bfBtns"><button class="btn ghost" onclick="backfillMissing()">未取込を補完</button>
       <button class="btn ghost" onclick="backfill()">過去取込（全員）</button></span>
-      <button class="btn ghost" onclick="exportData()">出力</button>
+      <button class="btn ghost" onclick="exportCsv()">CSV</button>
+      <button class="btn ghost" onclick="exportData()">JSON</button>
     </div>
   </div>
 
   <div id="err"></div>
 
+  <div class="tabs" id="mainTab">
+    <button data-k="overview" class="on">全体</button>
+    <button data-k="compare">PF比較</button>
+    <button data-k="heatmap">時間帯</button>
+    <button data-k="duration">配信時間</button>
+    <button data-k="alerts">急上昇</button>
+  </div>
+
   <!-- 全体グラフ（主役・線1本） -->
+  <div id="viewOverview">
   <div class="hero">
     <div class="heroTop">
       <div>
@@ -203,6 +236,46 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
   </div>
 
   <div class="tbl" id="tbl"></div>
+  </div>
+
+  <div id="viewCompare" style="display:none">
+    <div class="hero">
+      <div class="bigl">ツイキャス vs Kick（日本）</div>
+      <canvas id="cmpChart" style="height:440px!important;margin-top:14px"></canvas>
+      <div class="note">両プラットフォームの「最高同接の平均」を同一軸で比較します。Kickは監視開始以降のデータのみ。</div>
+    </div>
+    <div class="stats3" id="cmpStats"></div>
+  </div>
+
+  <div id="viewHeatmap" style="display:none">
+    <div class="hero">
+      <div class="bigl">曜日 × 時間帯（日本時間）</div>
+      <div class="note" style="margin:8px 0 18px">色が濃いほど平均同接が高い時間帯です。配信時間を決める材料になります。</div>
+      <div class="hmwrap" id="hmOverall"></div>
+    </div>
+  </div>
+
+  <div id="viewDuration" style="display:none">
+    <div class="hero">
+      <div class="bigl">配信時間と同接の関係</div>
+      <div class="note" style="margin:8px 0 18px">長時間配信が本当に同接に効いているかを確認できます。</div>
+      <div id="durList"></div>
+    </div>
+  </div>
+
+  <div id="viewAlerts" style="display:none">
+    <div class="hero">
+      <div class="bigl">急上昇している配信者</div>
+      <div class="ctrl" style="margin-top:12px">
+        <div class="seg" id="alertTh">
+          <button data-k="30">+30%以上</button>
+          <button data-k="50" class="on">+50%以上</button>
+          <button data-k="100">+100%以上</button>
+        </div>
+      </div>
+      <div id="alertList"></div>
+    </div>
+  </div>
 </div>
 
 <div class="mask" id="mask" onclick="if(event.target===this)closeModal()">
@@ -214,6 +287,8 @@ const API=location.origin+'/api';
 let config={broadcasters:[]},stats={},overall=[];
 let oChart=null,dChart=null,openUid=null;
 let platform='twitcasting';
+let mainTab='overview',alertTh=50;
+let cmpChart=null;
 let range=90,listSort='pct',listFilter='active',trendBase='b5';
 const PH='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2260%22 height=%2260%22%3E%3Crect fill=%22%231b2233%22 width=%2260%22 height=%2260%22/%3E%3C/svg%3E';
 const METRIC_LABEL={overall_avg:'全体平均同接',overall_avg_peak:'全体平均ピーク',
@@ -356,13 +431,126 @@ async function loadAll(){
 }
 
 function bcList(){ return (config.broadcasters||[]).filter(b=>(b.platform||'twitcasting')===platform); }
+function showTab(k){
+  mainTab=k;
+  ['overview','compare','heatmap','duration','alerts'].forEach(v=>{
+    const el=document.getElementById('view'+v[0].toUpperCase()+v.slice(1));
+    if(el)el.style.display=(v===k)?'':'none';
+  });
+  if(k==='compare')loadCompare();
+  if(k==='heatmap')loadHeatmap();
+  if(k==='duration')loadDuration();
+  if(k==='alerts')loadAlerts();
+}
+
+async function loadCompare(){
+  try{
+    const rows=await fetch(API+'/compare').then(r=>r.json());
+    const byP={twitcasting:[],kick:[]};
+    rows.forEach(r=>{ if(byP[r.platform])byP[r.platform].push(r); });
+    const days=[...new Set(rows.map(r=>r.day))].sort();
+    const mk=(arr,key)=>{const m={};arr.forEach(r=>m[r.day]=r[key]==null?null:Number(r[key]));
+      return days.map(d=>m[d]??null);};
+    const win=winFor(days.length);
+    const tw=movingAvg(mk(byP.twitcasting,'overall_peak_avg'),win);
+    const kk=movingAvg(mk(byP.kick,'overall_peak_avg'),win);
+    if(cmpChart)cmpChart.destroy();
+    cmpChart=new Chart(document.getElementById('cmpChart'),{type:'line',
+      data:{labels:days,datasets:[
+        {label:'ツイキャス',data:tw,...lineStyle('#5b8cff'),spanGaps:true,
+         pointRadius:days.length>45?0:4,borderWidth:3},
+        {label:'Kick（日本）',data:kk,...lineStyle('#2ee6a8'),spanGaps:true,
+         pointRadius:days.length>45?0:4,borderWidth:3}
+      ]},
+      options:{responsive:true,maintainAspectRatio:false,...NOANIM,
+        layout:{padding:{top:8,right:12,left:2,bottom:2}},
+        interaction:{mode:'index',intersect:false},
+        plugins:{legend:LEGEND,tooltip:{...TIP,callbacks:{
+          title:it=>dayJp(days[it[0].dataIndex]),
+          label:it=>it.parsed.y==null?null:` ${it.dataset.label}  ${fmt(it.parsed.y)}`}}},
+        scales:{x:{...AXIS.x,ticks:{...AXIS.x.ticks,callback:function(v){
+            const d=this.getLabelForValue(v);if(!d)return'';
+            const x=new Date(d+'T00:00:00+09:00');return`${x.getMonth()+1}/${x.getDate()}`;}}},
+          y:AXIS.y}}});
+
+    const last=p=>{const a=byP[p];return a.length?a[a.length-1]:null;};
+    const t=last('twitcasting'),k=last('kick');
+    document.getElementById('cmpStats').innerHTML=`
+      <div class="st"><div class="l">ツイキャス 最新日の平均</div><div class="v" style="color:#8fb0ff">${fmt(t&&t.overall_peak_avg)}</div></div>
+      <div class="st"><div class="l">Kick 最新日の平均</div><div class="v" style="color:#7fe6c4">${fmt(k&&k.overall_peak_avg)}</div></div>
+      <div class="st"><div class="l">ツイキャス 配信者数</div><div class="v">${fmt(t&&t.broadcasters)}</div></div>
+      <div class="st"><div class="l">Kick 配信者数</div><div class="v">${fmt(k&&k.broadcasters)}</div></div>
+      <div class="st"><div class="l">同接比（Kick/ツイキャス）</div><div class="v">${(t&&k&&t.overall_peak_avg)?Math.round(k.overall_peak_avg/t.overall_peak_avg*100)+'%':'—'}</div></div>`;
+  }catch(e){showErr('比較データ取得エラー: '+e.message);}
+}
+
+async function loadHeatmap(){
+  try{
+    const rows=await fetch(API+'/heatmap?platform='+platform).then(r=>r.json());
+    const DOW=['月','火','水','木','金','土','日'];
+    const g={};let max=0;
+    rows.forEach(r=>{const d=Number(r.dow),h=Number(r.hour),v=Number(r.avg_conc||0);
+      g[d+'_'+h]=v;if(v>max)max=v;});
+    if(!max){document.getElementById('hmOverall').innerHTML='<div class="empty">まだデータがありません</div>';return;}
+    let html='<div class="hmg"><div></div>';
+    for(let h=0;h<24;h++)html+=`<div class="hh">${h}</div>`;
+    html+='</div><div class="hmg" style="margin-top:4px">';
+    for(let d=1;d<=7;d++){
+      html+=`<div class="hl">${DOW[d-1]}</div>`;
+      for(let h=0;h<24;h++){
+        const v=g[d+'_'+h]||0;
+        html+=`<div class="cell" ${v?`title="${DOW[d-1]} ${h}時 平均同接 ${fmt(v)}"`:''} style="${v?`background:${withAlpha('#5b8cff',0.10+0.90*(v/max))}`:''}"></div>`;
+      }
+    }
+    html+='</div><div class="hmleg">少 <i style="background:'+withAlpha('#5b8cff',.15)+'"></i><i style="background:'+withAlpha('#5b8cff',.45)+'"></i><i style="background:'+withAlpha('#5b8cff',.75)+'"></i><i style="background:'+withAlpha('#5b8cff',1)+'"></i> 多（最大 '+fmt(max)+'）</div>';
+    document.getElementById('hmOverall').innerHTML=html;
+  }catch(e){showErr('ヒートマップ取得エラー: '+e.message);}
+}
+
+async function loadDuration(){
+  try{
+    const rows=await fetch(API+'/duration?platform='+platform).then(r=>r.json());
+    if(!rows.length){document.getElementById('durList').innerHTML='<div class="empty">まだデータがありません</div>';return;}
+    const max=Math.max(...rows.map(r=>Number(r.avg_peak||0)));
+    document.getElementById('durList').innerHTML=rows.map(r=>`
+      <div class="dur">
+        <div style="font-weight:700">${esc(r.bucket)}</div>
+        <div class="bar"><i style="width:${max?Math.round(Number(r.avg_peak)/max*100):0}%"></i></div>
+        <div class="n">${fmt(r.avg_peak)}<small>平均最高同接</small></div>
+        <div class="n">${fmt(r.broadcasts)}<small>配信数</small></div>
+      </div>`).join('');
+  }catch(e){showErr('配信時間分析エラー: '+e.message);}
+}
+
+async function loadAlerts(){
+  try{
+    const rows=await fetch(API+`/alerts?platform=${platform}&threshold=${alertTh}`).then(r=>r.json());
+    if(!rows.length){document.getElementById('alertList').innerHTML='<div class="empty">条件に合う配信者はいません</div>';return;}
+    document.getElementById('alertList').innerHTML=rows.slice(0,50).map(r=>`
+      <div class="alert" onclick="openModal('${esc(r.user_id)}')" style="cursor:pointer">
+        <img src="${esc(r.image||PH)}" onerror="this.src='${PH}'">
+        <div style="min-width:0">
+          <div class="a1">${esc(r.name)}</div>
+          <div class="a2">直近${r.n}配信 ${fmt(r.recent)} ← 前${r.n}配信 ${fmt(r.prev)}</div>
+        </div>
+        <div class="a3">▲ +${r.pct}%</div>
+      </div>`).join('');
+  }catch(e){showErr('急上昇取得エラー: '+e.message);}
+}
+
+function exportCsv(){
+  const t=confirm('OK: 日別サマリー ／ キャンセル: 配信者一覧')?'daily':'broadcasters';
+  window.location.href=API+`/export.csv?platform=${platform}&type=${t}`;
+}
+
 function render(){
   document.getElementById('title').textContent = platform==='kick'?'Kick 全体トラッカー（日本）':'ツイキャス全体トラッカー';
-  document.getElementById('bfBtns').style.display=platform==='kick'?'none':'';
+  
   renderOverall();
   renderStats();
   renderTable();
   if(openUid)renderModal(openUid);
+  if(mainTab==='alerts')loadAlerts();
   const L=bcList();
   const n=L.filter(b=>isLive(stats[b.user_id])).length;
   const au=L.filter(b=>b.auto&&!b.dormant).length;
@@ -385,7 +573,7 @@ function renderOverall(){
   const hasReal=avgs.some(v=>v!=null);
   document.getElementById('heroVal').textContent=fmt(peaks.length?peaks[peaks.length-1]:null);
   document.getElementById('heroLabel').textContent=platform==='kick'?'全体 平均同接（最新日）':'全体 最高同接の平均（最新日）';
-  document.getElementById('heroTotalBox').style.display=platform==='kick'?'none':'';
+  document.getElementById('heroTotalBox').style.display='';
   document.getElementById('heroVal2').textContent=fmt(tots.length?tots[tots.length-1]:null);
 
   const cmp=(days,label)=>{
@@ -401,7 +589,7 @@ function renderOverall(){
   document.getElementById('deltas').innerHTML=cmp(1,'前日')+cmp(7,'先週')+cmp(30,'先月');
 
   document.getElementById('note').textContent=rows.length
-    ? `${rows[0].day} 〜 ${rows[rows.length-1].day}／${rows.length}日分・のべ${rows.reduce((t,r)=>t+Number(r.broadcasts||0),0).toLocaleString('ja-JP')}配信を集計　${platform==='kick'?'　※Kickは過去配信の視聴数をAPIで取得できないため、監視開始日以降のみ記録されます。総来場者は取得不可のため同接のみです。':'　※ツイキャスAPIは過去配信の「最高同接」しか返さないため、長期の推移は最高同接の平均で比較しています。実測の平均同接（オレンジ点線）は本ツールで監視を開始した日以降のみ。'}`
+    ? `${rows[0].day} 〜 ${rows[rows.length-1].day}／${rows.length}日分・のべ${rows.reduce((t,r)=>t+Number(r.broadcasts||0),0).toLocaleString('ja-JP')}配信を集計　　※長期の推移は全期間で取得できる「最高同接の平均」で比較しています。実測の平均同接（オレンジ点線）は本ツールで監視した配信のみで、計測率35%未満の日は非表示です。`
     : 'まだ集計できるデータがありません。「過去取込」を押すと一気に貯まります。';
 
   const win=winFor(rows.length);
@@ -413,7 +601,7 @@ function renderOverall(){
     data:{labels:rows.map(r=>r.day),datasets:[
       {label:`最高同接の平均（${win}日移動平均）`,data:peakMA,...lineStyle('#5b8cff'),
        borderWidth:3,pointRadius:many?0:4,pointHoverRadius:7,yAxisID:'y',order:1},
-      ...(platform==='kick'?[]:[{label:`総来場者（${win}日移動平均）`,data:totMA,...lineStyle('#2ee6a8'),
+      ...([{label:`総来場者（${win}日移動平均）`,data:totMA,...lineStyle('#2ee6a8'),
         backgroundColor:gradFill('#2ee6a8',false),
         borderWidth:2.6,pointRadius:many?0:4,pointHoverRadius:7,yAxisID:'y1',order:2}]),
       ...(hasReal?[{label:'実測の平均同接（日次）',data:avgs,
@@ -431,7 +619,7 @@ function renderOverall(){
               ` 最高同接の平均（日） ${fmt(r.overall_peak_avg)}`,
               ` 最高同接の平均（${win}日） ${fmt(peakMA[i])}`];
             if(r.overall_avg!=null) out.push(` 実測の平均同接      ${fmt(r.overall_avg)}（${r.measured_broadcasts}/${r.broadcasts}配信を計測）`);
-            if(platform!=='kick') out.push(` 総来場者            ${fmt(r.overall_total_viewers)}`);
+            out.push(` 総来場者            ${fmt(r.overall_total_viewers)}`);
             out.push(
               ` 配信数 / 配信者数   ${fmt(r.broadcasts)} / ${fmt(r.broadcasters)}`,
               ` その日の最高        ${fmt(r.day_max_peak)}`);
@@ -441,7 +629,7 @@ function renderOverall(){
             const d=this.getLabelForValue(v);if(!d)return'';
             const x=new Date(d+'T00:00:00+09:00');return`${x.getMonth()+1}/${x.getDate()}`;}}},
         y:{...AXIS.y,position:'left',ticks:{...AXIS.y.ticks,color:'#8fb0ff'}},
-        y1:{...AXIS.y,display:platform!=='kick',position:'right',grid:{display:false},
+        y1:{...AXIS.y,position:'right',grid:{display:false},
             ticks:{...AXIS.y.ticks,color:'#7fe6c4',
               callback:v=>v>=10000?(v/10000)+'万':v.toLocaleString('ja-JP')}}
       }}});
@@ -458,7 +646,7 @@ function renderStats(){
     <div class="st"><div class="l">いま配信中の平均同接</div><div class="v" style="color:var(--live)">${fmt(curAvg)}</div></div>
     <div class="st"><div class="l">いま配信中の合計同接</div><div class="v">${fmt(curSum)}</div></div>
     <div class="st"><div class="l">最新日の配信者数</div><div class="v">${fmt(last&&last.broadcasters)}</div></div>
-    ${platform==='kick'?'':`<div class="st"><div class="l">最新日の総来場者</div><div class="v">${fmt(last&&last.overall_total_viewers)}</div></div>`}
+    <div class="st"><div class="l">最新日の総来場者</div><div class="v">${fmt(last&&last.overall_total_viewers)}</div></div>
     <div class="st"><div class="l">全期間の最高同接平均</div><div class="v">${fmt(mean(allDays))}</div></div>
     <div class="st"><div class="l">集計日数</div><div class="v">${overall.length}</div></div>`;
 }
@@ -673,7 +861,15 @@ function showErr(m){document.getElementById('err').innerHTML=`<div class="err">$
 function bindSeg(id,cb){document.getElementById(id).addEventListener('click',e=>{
   const b=e.target.closest('button');if(!b)return;
   [...b.parentNode.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');cb(b.dataset.k);});}
-bindSeg('platform',k=>{platform=k;closeModal();loadAll();});
+bindSeg('platform',k=>{platform=k;closeModal();loadAll();
+  if(mainTab==='heatmap')loadHeatmap();
+  if(mainTab==='duration')loadDuration();
+  if(mainTab==='alerts')loadAlerts();});
+bindSeg('alertTh',k=>{alertTh=Number(k);loadAlerts();});
+document.getElementById('mainTab').addEventListener('click',e=>{
+  const b=e.target.closest('button');if(!b)return;
+  [...b.parentNode.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');
+  showTab(b.dataset.k);});
 bindSeg('range',k=>{range=Number(k);renderOverall();});
 bindSeg('listSort',k=>{listSort=k;renderTable();});
 bindSeg('trendBase',k=>{trendBase=k;renderTable();if(openUid)renderModal(openUid);});
