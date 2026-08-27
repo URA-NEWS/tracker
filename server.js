@@ -61,6 +61,19 @@ async function sb(method, table, { query = '', body = null, prefer = '' } = {}) 
   return txt ? JSON.parse(txt) : null;
 }
 
+// PostgREST は1回1000行までしか返さないため、全件取るページャ
+async function sbAll(table, selectAndOrder, pageSize = 1000, maxPages = 500) {
+  const out = [];
+  for (let page = 0; page < maxPages; page++) {
+    const q = `${selectAndOrder}&limit=${pageSize}&offset=${page * pageSize}`;
+    const rows = await sb('GET', table, { query: q });
+    if (!rows || !rows.length) break;
+    out.push(...rows);
+    if (rows.length < pageSize) break;
+  }
+  return out;
+}
+
 // ---------- 起動時ロード ----------
 async function bootstrap() {
   if (!USE_SB) {
@@ -71,11 +84,11 @@ async function bootstrap() {
   }
   console.log('[storage] supabase');
   try {
-    const bcs = await sb('GET', 'tw_broadcasters', { query: '?select=user_id,name,image,pinned,auto,last_live_at,best_peak,dormant,dormant_at,platform,kick_slug,kick_user_id&order=created_at.asc' });
+    const bcs = await sbAll('tw_broadcasters', '?select=user_id,name,image,pinned,auto,last_live_at,best_peak,dormant,dormant_at,platform,kick_slug,kick_user_id&order=created_at.asc');
     config = { broadcasters: bcs || [] };
 
-    const brs = await sb('GET', 'tw_broadcasts', { query: '?select=id,user_id,started_at,ended_at,peak,total,duration,source,platform&order=started_at.asc' });
-    const smp = await sb('GET', 'tw_samples', { query: '?select=broadcast_id,concurrent,total,ts&order=ts.asc&limit=100000' });
+    const brs = await sbAll('tw_broadcasts', '?select=id,user_id,started_at,ended_at,peak,total,duration,source,platform&order=started_at.asc');
+    const smp = await sbAll('tw_samples', '?select=broadcast_id,concurrent,total,ts&order=ts.asc', 1000, 300);
 
     const byBc = {};
     (smp || []).forEach(s => {
@@ -952,7 +965,7 @@ const server = http.createServer((req, res) => {
       try {
         if (USE_SB) {
           const plat = (url.parse(req.url, true).query.platform) || 'twitcasting';
-          const rows = await sb('GET', 'tw_daily_overall', { query: `?select=*&platform=eq.${encodeURIComponent(plat)}&order=day.asc` });
+          const rows = await sbAll('tw_daily_overall', `?select=*&platform=eq.${encodeURIComponent(plat)}&order=day.asc`);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(rows || []));
           return;
