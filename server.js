@@ -88,7 +88,7 @@ async function bootstrap() {
   }
   console.log('[storage] supabase');
   try {
-    const bcs = await sbAll('tw_broadcasters', '?select=user_id,name,image,pinned,auto,last_live_at,best_peak,dormant,dormant_at,platform,kick_slug,kick_user_id,follower_count&order=created_at.asc');
+    const bcs = await sbAll('tw_broadcasters', '?select=user_id,name,image,pinned,auto,last_live_at,best_peak,dormant,dormant_at,platform,kick_slug,kick_user_id,follower_count,ww_user_id&order=created_at.asc');
     config = { broadcasters: bcs || [] };
 
     const brs = await sbAll('tw_broadcasts', '?select=id,user_id,started_at,ended_at,peak,total,duration,source,platform,avg_concurrent,sample_count,category,title&order=started_at.asc');
@@ -164,8 +164,10 @@ async function persistBroadcasterAdd(b) {
     dormant_at: b.dormant_at ?? null, last_live_at: b.last_live_at ?? null,
     best_peak: Number(b.best_peak || 0), platform: b.platform || 'twitcasting',
     kick_slug: b.kick_slug ?? null, kick_user_id: b.kick_user_id ?? null,
+    ww_user_id: b.ww_user_id ?? null,
     follower_count: b.follower_count ?? null,
-    follower_updated_at: b.follower_updated_at ?? null
+    follower_updated_at: b.follower_updated_at ?? null,
+    ww_user_id: b.ww_user_id ?? null
   };
   await sb('POST', 'tw_broadcasters', { body: [row], prefer: 'resolution=merge-duplicates' });
 }
@@ -329,7 +331,17 @@ async function refreshOne(b) {
   {
     try {
       let changed = false;
-      if ((b.platform || 'twitcasting') === 'kick') {
+      if ((b.platform || 'twitcasting') === 'whowatch') {
+        const w = await fetchWWUser(wwPath(b.user_id));
+        if (w) {
+          if (w.name && w.name !== b.name) { b.name = w.name; changed = true; }
+          if (w.image && w.image !== b.image) { b.image = w.image; changed = true; }
+          if (w.user_id_num && w.user_id_num !== b.ww_user_id) { b.ww_user_id = w.user_id_num; changed = true; }
+          if (w.followers && w.followers !== b.follower_count) {
+            b.follower_count = w.followers; b.follower_updated_at = new Date().toISOString(); changed = true;
+          }
+        }
+      } else if ((b.platform || 'twitcasting') === 'kick') {
         const f = await fetchKickFollowers(b);
         if (f && f !== b.follower_count) {
           b.follower_count = f; b.follower_updated_at = new Date().toISOString(); changed = true;
@@ -466,6 +478,10 @@ async function runBackfillJob(targets) {
 }
 
 async function backfillUser(userId, maxMovies = 500) {
+  if (isWW(userId)) {
+    const b = config.broadcasters.find(x => x.user_id === userId);
+    return b ? await backfillWW(b) : { ok: false, reason: 'not_found', imported: 0 };
+  }
   if (isKick(userId)) {
     const b = config.broadcasters.find(x => x.user_id === userId);
     return b ? await backfillKick(b) : { ok: false, reason: 'not_found', imported: 0 };
@@ -577,6 +593,241 @@ async function backfillUser(userId, maxMovies = 500) {
   broadcasterStats[userId].history.sort((a, b) => new Date(a.started_at) - new Date(b.started_at));
   if (!USE_SB) saveJson(STATS_FILE, broadcasterStats);
   return { ok: true, imported, scanned, titleFixed };
+}
+
+// ---------- ふわっち (whowatch) ----------
+const WW_PREFIX = 'ww:';
+const isWW = uid => String(uid).startsWith(WW_PREFIX);
+const wwPath = uid => String(uid).slice(WW_PREFIX.length);   // 例 "w:pastelcafe"
+const WW_LIMIT = 50;
+const WW_HDRS = { 'User-Agent': UA, Accept: 'application/json', 'Accept-Language': 'ja' };
+
+let wwLiveCache = { at: 0, list: [] };
+
+// 配信中の一覧（認証不要・1リクエストで全件）
+async function fetchWWLiveList() {
+  const urls = [
+    'https://api.whowatch.tv/lives?order=popular',
+    'https://api.whowatch.tv/lives'
+  ];
+  for (const u of urls) {
+    try {
+      const r = await fetch(u, { headers: WW_HDRS });
+      if (!r.ok) continue;
+      const j = await r.json();
+      const out = [];
+      const push = (l) => {
+        if (!l || !l.user || !l.user.user_path) return;
+        out.push({
+          user_id: WW_PREFIX + l.user.user_path,
+          live_id: l.id,
+          name: l.user.name || l.user.user_path,
+          image: l.user.icon_url || null,
+          viewers: Number(l.view_count || 0),
+          total: Number(l.total_view_count || 0),
+          title: l.title || null,
+          started_at: l.started_at ? new Date(Number(l.started_at)).toISOString() : null
+        });
+      };
+      if (Array.isArray(j)) {
+        for (const cat of j) {
+          for (const key of ['new', 'popular', 'lives']) {
+            if (Array.isArray(cat[key])) cat[key].forEach(push);
+          }
+        }
+      } else if (j && Array.isArray(j.lives)) {
+        j.lives.forEach(push);
+      }
+      // 同一配信者の重複を除去（同接が大きい方を残す）
+      const map = new Map();
+      for (const x of out) {
+        const cur = map.get(x.user_id);
+        if (!cur || x.viewers > cur.viewers) map.set(x.user_id, x);
+      }
+      const list = [...map.values()].sort((a, b) => b.viewers - a.viewers);
+      if (list.length) return list;
+    } catch (e) { /* next */ }
+  }
+  return [];
+}
+
+async function getWWLive() {
+  if (Date.now() - wwLiveCache.at < 12000) return wwLiveCache.list;
+  const list = await fetchWWLiveList();
+  if (list && list.length) wwLiveCache = { at: Date.now(), list };
+  return wwLiveCache.list;
+}
+
+// プロフィール（フォロワー数など）
+async function fetchWWUser(userPath) {
+  const tries = [
+    `https://api.whowatch.tv/profiles/${encodeURIComponent(userPath)}`,
+    `https://api.whowatch.tv/users/${encodeURIComponent(userPath)}`
+  ];
+  for (const u of tries) {
+    try {
+      const r = await fetch(u, { headers: WW_HDRS });
+      if (!r.ok) continue;
+      const j = await r.json();
+      const usr = j.user || j.profile || j;
+      if (!usr) continue;
+      return {
+        name: usr.name || userPath,
+        image: usr.icon_url || usr.profile_icon_url || null,
+        followers: Number(usr.follower_count ?? usr.followers_count ?? j.follower_count ?? 0) || null,
+        user_id_num: usr.id ?? null
+      };
+    } catch (e) { /* next */ }
+  }
+  return null;
+}
+
+// 過去配信（取得できるか不明なので複数経路を試す）
+async function fetchWWArchives(b) {
+  const path = wwPath(b.user_id);
+  let numId = b.ww_user_id || null;
+  if (!numId) {
+    const info = await fetchWWUser(path);
+    if (info && info.user_id_num) numId = info.user_id_num;
+  }
+  const tries = [];
+  if (numId) {
+    tries.push(`https://api.whowatch.tv/users/${numId}/lives`);
+    tries.push(`https://api.whowatch.tv/users/${numId}/archives`);
+    tries.push(`https://api.whowatch.tv/users/${numId}/past_lives`);
+  }
+  tries.push(`https://api.whowatch.tv/profiles/${encodeURIComponent(path)}/lives`);
+
+  for (const u of tries) {
+    try {
+      const r = await fetch(u, { headers: WW_HDRS });
+      if (!r.ok) continue;
+      const j = await r.json();
+      const arr = Array.isArray(j) ? j : (j.lives || j.archives || j.data || null);
+      if (!Array.isArray(arr) || !arr.length) continue;
+      const out = arr.map(l => {
+        const st = l.started_at || l.created_at;
+        if (!st) return null;
+        const ms = Number(st) > 1e12 ? Number(st) : Number(st) * 1000;
+        if (!ms) return null;
+        const total = Number(l.total_view_count ?? l.view_count ?? 0);
+        if (!total) return null;
+        const dur = Number(l.duration || 0);
+        return {
+          live_id: l.id,
+          started_at: new Date(ms).toISOString(),
+          title: l.title || null,
+          total,
+          duration: dur > 100000 ? Math.round(dur / 1000) : dur
+        };
+      }).filter(Boolean);
+      if (out.length) return { ok: true, endpoint: u, items: out };
+    } catch (e) { /* next */ }
+  }
+  return { ok: false, items: [] };
+}
+
+async function backfillWW(b) {
+  const r = await fetchWWArchives(b);
+  if (!r.ok) return { ok: false, reason: 'no_archive_api', imported: 0 };
+  const uid = b.user_id;
+  if (!broadcasterStats[uid]) broadcasterStats[uid] = { user_id: uid, current_broadcast: null, history: [] };
+  const rows = [];
+  let titleFixed = 0;
+  for (const v of r.items) {
+    const id = `warc_${uid}_${v.live_id}`;
+    const ex = broadcasterStats[uid].history.find(h => h.broadcast_id === id);
+    if (ex) {
+      if (v.title && !ex.title) {
+        ex.title = v.title; titleFixed++;
+        if (USE_SB) { try { await sb('PATCH', 'tw_broadcasts', { query: `?id=eq.${encodeURIComponent(id)}`, body: { title: v.title } }); } catch (e) {} }
+      }
+      continue;
+    }
+    const sMs = new Date(v.started_at).getTime();
+    const dup = (broadcasterStats[uid].history || []).find(h => {
+      if (h.source !== 'live') return false;
+      const hs = new Date(h.started_at).getTime();
+      return hs >= sMs - 10 * 60000 && hs <= sMs + (v.duration || 0) * 1000 + 20 * 60000;
+    });
+    if (dup) {
+      if (!dup.total_final || dup.total_final < v.total) {
+        dup.total_final = v.total;
+        if (!dup.title && v.title) dup.title = v.title;
+        if (USE_SB) { try { await sb('PATCH', 'tw_broadcasts', { query: `?id=eq.${encodeURIComponent(dup.broadcast_id)}`, body: { total: v.total, title: dup.title || null } }); } catch (e) {} }
+      }
+      continue;
+    }
+    const obj = {
+      broadcast_id: id, started_at: v.started_at,
+      ended_at: new Date(sMs + (v.duration || 0) * 1000).toISOString(),
+      title: v.title, source: 'archive', platform: 'whowatch',
+      peak: null, total_final: v.total, duration: v.duration || 0, samples: []
+    };
+    broadcasterStats[uid].history.push(obj);
+    rows.push({
+      id, user_id: uid, started_at: obj.started_at, ended_at: obj.ended_at,
+      peak: null, total: v.total, duration: obj.duration, source: 'archive',
+      platform: 'whowatch', title: v.title
+    });
+  }
+  if (rows.length && USE_SB) {
+    try { await sb('POST', 'tw_broadcasts', { body: rows, prefer: 'resolution=merge-duplicates' }); }
+    catch (e) { console.error('ww backfill:', e.message); }
+  }
+  broadcasterStats[uid].history.sort((a, c) => new Date(a.started_at) - new Date(c.started_at));
+  return { ok: true, imported: rows.length, titleFixed, endpoint: r.endpoint };
+}
+
+// ふわっちの自動収集（同接上位）
+async function discoverWW() {
+  const list = await getWWLive();
+  if (!list || !list.length) return { ok: false, reason: 'no_data' };
+
+  const byId = new Map(config.broadcasters.map(b => [b.user_id, b]));
+  const added = [], slept = [], newlyAdded = [], now = new Date().toISOString();
+  const activeAutos = () => config.broadcasters.filter(b => b.auto && !b.dormant && b.platform === 'whowatch');
+  const scoreOf = b => Number(b.best_peak || 0);
+
+  for (const c of list) {
+    const ex = byId.get(c.user_id);
+    if (ex) {
+      let changed = false;
+      if (c.viewers > (ex.best_peak || 0)) { ex.best_peak = c.viewers; changed = true; }
+      ex.last_live_at = now;
+      if (ex.dormant && ex.auto) {
+        const autos = activeAutos();
+        if (autos.length < WW_LIMIT) { ex.dormant = false; ex.dormant_at = null; changed = true; }
+      }
+      if (changed) { try { await persistBroadcasterAdd(ex); } catch (e) {} }
+      continue;
+    }
+    const autos = activeAutos();
+    if (autos.length >= WW_LIMIT) {
+      const weakest = autos.reduce((m, b) => scoreOf(b) < scoreOf(m) ? b : m, autos[0]);
+      if (c.viewers > scoreOf(weakest)) {
+        weakest.dormant = true; weakest.dormant_at = now;
+        slept.push(weakest.user_id);
+        try { await persistBroadcasterAdd(weakest); } catch (e) {}
+      } else continue;
+    }
+    const b = {
+      user_id: c.user_id, name: c.name, image: c.image,
+      pinned: false, auto: true, dormant: false,
+      best_peak: c.viewers, last_live_at: now, platform: 'whowatch'
+    };
+    config.broadcasters.push(b);
+    byId.set(b.user_id, b);
+    if (!broadcasterStats[b.user_id]) broadcasterStats[b.user_id] = { user_id: b.user_id, current_broadcast: null, history: [] };
+    added.push({ user_id: b.user_id, name: b.name, viewers: c.viewers });
+    newlyAdded.push(b.user_id);
+    try { await persistBroadcasterAdd(b); } catch (e) { console.error('ww add:', e.message); }
+  }
+  if (!USE_SB) saveJson(CONFIG_FILE, config);
+  if (newlyAdded.length && !backfillJob.running) runBackfillJob(newlyAdded);
+  const act = activeAutos().length;
+  if (added.length || slept.length) console.log(`[ww] +${added.length} 休止${slept.length} (稼働 ${act}/${WW_LIMIT})`);
+  return { ok: true, added, slept, auto_slots: `${act}/${WW_LIMIT}`, candidates: list.length };
 }
 
 // ---------- Kick ----------
@@ -1043,7 +1294,7 @@ async function discoverTopLives() {
 async function pruneAuto() {
   const now = new Date().toISOString();
   const result = {};
-  for (const [plat, keep] of [['twitcasting', AUTO_LIMIT], ['kick', KICK_LIMIT]]) {
+  for (const [plat, keep] of [['twitcasting', AUTO_LIMIT], ['kick', KICK_LIMIT], ['whowatch', WW_LIMIT]]) {
     const autos = config.broadcasters.filter(
       b => b.auto && !b.dormant && (b.platform || 'twitcasting') === plat);
     if (autos.length <= keep) { result[plat] = 0; continue; }
@@ -1076,7 +1327,14 @@ async function checkOne(bc, now) {
   }
 
   let s = null;
-  if (bc.platform === 'kick') {
+  if (bc.platform === 'whowatch') {
+    const live = await getWWLive();
+    const hit = (live || []).find(x => x.user_id === uid);
+    s = hit ? {
+      concurrent: hit.viewers, total: hit.total,
+      timestamp: new Date().toISOString(), title: hit.title || null
+    } : null;
+  } else if (bc.platform === 'kick') {
     const live = await getKickLive();
     const hit = (live || []).find(x => x.user_id === uid);
     if (hit) s = { concurrent: hit.viewers, total: 0, timestamp: new Date().toISOString(), category: hit.category || null };
@@ -1203,7 +1461,9 @@ async function compactSamples() {
 
 // ---------- 集計ヘルパー ----------
 function ratioOf(plat) {
-  return plat === 'kick' ? { peak: 0.857, view: 0.169 } : { peak: 0.879, view: 0.120 };
+  if (plat === 'kick') return { peak: 0.857, view: 0.169 };
+  if (plat === 'whowatch') return { peak: 0.85, view: 0.15 };
+  return { peak: 0.879, view: 0.120 };
 }
 function estAvg(b, plat) {
   const r = ratioOf(plat);
@@ -1296,6 +1556,7 @@ const server = http.createServer((req, res) => {
       storage: USE_SB ? 'supabase' : 'local',
       official_api: USE_TC_API,
       kick_api: USE_KICK,
+      whowatch_api: true,
       retention_days: SAMPLE_RETENTION_DAYS,
       monitor_interval_sec: 60,
       auto_slots: `${config.broadcasters.filter(b => b.auto && !b.dormant).length}/${AUTO_LIMIT}`,
@@ -1484,6 +1745,24 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // ふわっちの過去配信APIを診断: GET /api/debug-ww/<user_path>
+  if (pathname.startsWith('/api/debug-ww/') && req.method === 'GET') {
+    (async () => {
+      const path = decodeURIComponent(pathname.replace('/api/debug-ww/', ''));
+      const out = { user_path: path };
+      out.profile = await fetchWWUser(path);
+      const b = { user_id: WW_PREFIX + path, ww_user_id: out.profile && out.profile.user_id_num };
+      const r = await fetchWWArchives(b);
+      out.archive_ok = r.ok;
+      out.archive_endpoint = r.endpoint || null;
+      out.archive_count = (r.items || []).length;
+      out.archive_sample = (r.items || []).slice(0, 3);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(out, null, 2));
+    })();
+    return;
+  }
+
   // フォロワー抽出の診断: GET /api/debug-fans/<id>
   if (pathname.startsWith('/api/debug-fans/') && req.method === 'GET') {
     (async () => {
@@ -1602,7 +1881,20 @@ const server = http.createServer((req, res) => {
       if (!word) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('[]'); return; }
       const out = [];
       try {
-        if (plat === 'kick') {
+        if (plat === 'whowatch') {
+          let path = word.match(/whowatch\.tv\/profile\/([^/?#]+)/i)?.[1] || word.replace(/^ww:/i, '');
+          const w = await fetchWWUser(path);
+          if (w) out.push({ user_id: WW_PREFIX + path, name: w.name, image: w.image, platform: 'whowatch', followers: w.followers });
+          const live = await getWWLive();
+          const q = word.toLowerCase();
+          for (const c of (live || [])) {
+            if (out.some(x => x.user_id === c.user_id)) continue;
+            if (String(c.name).toLowerCase().includes(q) || String(c.user_id).toLowerCase().includes(q)) {
+              out.push({ user_id: c.user_id, name: c.name, image: c.image, platform: 'whowatch', live: true });
+            }
+            if (out.length >= 12) break;
+          }
+        } else if (plat === 'kick') {
           const slug = word.match(/kick\.com\/([^/?#]+)/i)?.[1] || word.replace(/^kick:/i, '');
           // 完全一致
           const ch = await fetchKickChannel(slug);
@@ -1660,10 +1952,19 @@ const server = http.createServer((req, res) => {
       const uid = String(url.parse(req.url, true).query.id || '').trim();
       if (!uid) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end('{}'); return; }
       try {
-        const plat = isKick(uid) ? 'kick' : 'twitcasting';
+        const plat = isWW(uid) ? 'whowatch' : isKick(uid) ? 'kick' : 'twitcasting';
         let profile = null, broadcasts = [];
 
-        if (plat === 'kick') {
+        if (plat === 'whowatch') {
+          const w = await fetchWWUser(wwPath(uid));
+          const live = await getWWLive();
+          const hit = (live || []).find(x => x.user_id === uid);
+          profile = w ? { name: w.name, image: w.image, followers: w.followers, live: !!hit, current: hit ? hit.viewers : null } : null;
+          const arc = await fetchWWArchives({ user_id: uid, ww_user_id: w && w.user_id_num });
+          broadcasts = (arc.items || []).map(v => ({
+            started_at: v.started_at, title: v.title, peak: null, total: v.total, duration: v.duration
+          }));
+        } else if (plat === 'kick') {
           const b = { user_id: uid, kick_slug: kickSlug(uid) };
           const ch = await fetchKickChannel(kickSlug(uid));
           const fol = await fetchKickFollowers(b);
@@ -1806,7 +2107,9 @@ const server = http.createServer((req, res) => {
   if (pathname === '/api/discover' && req.method === 'POST') {
     (async () => {
       const plat = (url.parse(req.url, true).query.platform) || 'twitcasting';
-      const r = plat === 'kick' ? await discoverKick() : await discoverTopLives();
+      const r = plat === 'kick' ? await discoverKick()
+        : plat === 'whowatch' ? await discoverWW()
+        : await discoverTopLives();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(r, null, 2));
     })();
@@ -1964,7 +2267,11 @@ const server = http.createServer((req, res) => {
           res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'すでに追加済みです' })); return;
         }
         let info, plat = 'twitcasting';
-        if (isKick(uid)) {
+        if (isWW(uid)) {
+          plat = 'whowatch';
+          const w = await fetchWWUser(wwPath(uid));
+          info = w ? { name: w.name, image: w.image, followers: w.followers } : null;
+        } else if (isKick(uid)) {
           plat = 'kick';
           const ch = await fetchKickChannel(kickSlug(uid));
           info = ch ? { name: ch.name, image: ch.image } : null;
@@ -1974,7 +2281,8 @@ const server = http.createServer((req, res) => {
         if (!info) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: `ユーザーが見つかりません: ${uid}` })); return; }
 
         const b = { user_id: uid, name: info.name, image: info.image, pinned: true, auto: false, dormant: false, best_peak: 0, platform: plat };
-        if (plat === 'kick') { b.kick_slug = kickSlug(uid); const f = await fetchKickFollowers(b); if (f) { b.follower_count = f; b.follower_updated_at = new Date().toISOString(); } }
+        if (plat === 'whowatch') { if (info.followers) { b.follower_count = info.followers; b.follower_updated_at = new Date().toISOString(); } }
+        else if (plat === 'kick') { b.kick_slug = kickSlug(uid); const f = await fetchKickFollowers(b); if (f) { b.follower_count = f; b.follower_updated_at = new Date().toISOString(); } }
         else if (info.followers) { b.follower_count = info.followers; b.follower_updated_at = new Date().toISOString(); }
         config.broadcasters.push(b);
         broadcasterStats[uid] = { user_id: uid, current_broadcast: null, history: [] };
@@ -2034,6 +2342,7 @@ bootstrap().then(() => {
   discoverTopLives();
   setInterval(discoverTopLives, 5 * 60 * 1000);
   if (USE_KICK) { discoverKick(); setInterval(discoverKick, 5 * 60 * 1000); }
+  discoverWW(); setInterval(discoverWW, 5 * 60 * 1000);
   setTimeout(async () => { const r = await pruneAuto(); console.log('[prune]', JSON.stringify(r)); }, 10 * 1000);
   setInterval(() => pruneAuto(), 60 * 60 * 1000);
   setTimeout(compactSamples, 3 * 60 * 1000);
