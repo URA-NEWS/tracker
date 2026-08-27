@@ -207,6 +207,37 @@ async function persistSample(uid, bid, s) {
   });
 }
 
+// "9.5k" "1.2万" "12,345" → 数値
+function parseCountToken(tok) {
+  if (!tok) return null;
+  const m = String(tok).replace(/,/g, '').match(/([\d.]+)\s*([kKmM万億]?)/);
+  if (!m) return null;
+  let n = parseFloat(m[1]);
+  if (isNaN(n)) return null;
+  const suf = m[2];
+  if (suf === 'k' || suf === 'K') n *= 1000;
+  else if (suf === 'm' || suf === 'M') n *= 1000000;
+  else if (suf === '万') n *= 10000;
+  else if (suf === '億') n *= 100000000;
+  return Math.round(n);
+}
+
+// プロフィールHTMLから「ファン(Fans)」数を取る。/{user}/backers/ リンクの近傍を見る
+function parseFansFromHtml(html, userId) {
+  if (!html) return null;
+  const re = new RegExp(`/${userId.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}/backers`, 'i');
+  const idx = html.search(re);
+  if (idx === -1) return null;
+  const win = html.slice(idx, idx + 600)
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ');
+  // 「ファン」「Fans」の直後、もしくは最初に現れる数値トークン
+  let m = win.match(/(?:ファン|Fans?)\s*([\d.,]+\s*[kKmM万億]?)/i)
+       || win.match(/([\d.,]+\s*[kKmM万億]?)/);
+  return m ? parseCountToken(m[1]) : null;
+}
+
 // ---------- ツイキャス: 名前・アイコン ----------
 async function fetchUserInfo(userId) {
   // 公式APIが使える場合はそちらを優先（正確な配信者名・アイコン）
@@ -221,23 +252,12 @@ async function fetchUserInfo(userId) {
           const apiRes = {
             name: j.user.name || j.user.screen_id || userId,
             image: (j.user.image || '').replace(/^http:/, 'https:').replace(/_normal\.(jpg|png)/, '_400x400.$1') || null,
-            followers: Number(j.user.supporter_count ?? j.user.supporterCount ?? 0) || null
+            followers: null
           };
           if (!apiRes.followers) {
             try {
               const h = await fetch(`https://twitcasting.tv/${encodeURIComponent(userId)}`, { headers: { 'User-Agent': UA, 'Accept-Language': 'ja' } });
-              if (h.ok) {
-                const html2 = await h.text();
-                const pats = [
-                  /"followerCount"\s*:\s*"?([\d,]+)"?/,
-                  /data-follower-count=["']([\d,]+)["']/,
-                  /id=["']fanCount["'][^>]*>\s*([\d,]+)/,
-                  /class=["'][^"']*tw-follower-count[^"']*["'][^>]*>\s*([\d,]+)/,
-                  /フォロワー[\s\S]{0,80}?([\d,]{1,12})/,
-                  /サポーター[\s\S]{0,80}?([\d,]{1,12})/
-                ];
-                for (const re of pats) { const mm = html2.match(re); if (mm) { apiRes.followers = parseInt(mm[1].replace(/,/g,''),10)||null; break; } }
-              }
+              if (h.ok) apiRes.followers = parseFansFromHtml(await h.text(), userId);
             } catch (e) {}
           }
           return apiRes;
@@ -255,22 +275,7 @@ async function fetchUserInfo(userId) {
     let name = null, image = null, followers = null;
 
     // フォロワー数をHTMLから拾う
-    const FOLLOW_PATTERNS = [
-      /"followerCount"\s*:\s*"?([\d,]+)"?/,
-      /data-follower-count=["']([\d,]+)["']/,
-      /id=["']fanCount["'][^>]*>\s*([\d,]+)/,
-      /class=["'][^"']*tw-follower-count[^"']*["'][^>]*>\s*([\d,]+)/,
-      /class=["'][^"']*follower[^"']*["'][^>]*>[^<]*?([\d,]+)/i,
-      /フォロワー[\s\S]{0,80}?([\d,]{1,12})/,
-      /サポーター[\s\S]{0,80}?([\d,]{1,12})/
-    ];
-    let fm = null;
-    for (const re of FOLLOW_PATTERNS) { fm = html.match(re); if (fm) break; }
-    if (fm) followers = parseInt(String(fm[1]).replace(/,/g, ''), 10) || null;
-    if (!followers) {
-      const sm2 = html.match(/サポーター[^0-9]{0,40}?([\d,]+)/);
-      if (sm2) followers = parseInt(sm2[1].replace(/,/g, ''), 10) || null;
-    }
+    followers = parseFansFromHtml(html, userId);
 
     // 配信者名: <title> の "○○ (@id) 's Live" から取る（og:title は配信タイトルなので使わない）
     const t = html.match(/<title>([\s\S]*?)<\/title>/i);
@@ -1805,16 +1810,18 @@ const server = http.createServer((req, res) => {
   if (pathname === '/api/broadcaster' && req.method === 'GET') {
     const uid = String(url.parse(req.url, true).query.id || '');
     const st = broadcasterStats[uid];
-    if (!st) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end('{}'); return; }
     const bc = config.broadcasters.find(b => b.user_id === uid);
     const p = (bc && bc.platform) || 'twitcasting';
-    const list = broadcastList(uid, p);
+    const list = st ? broadcastList(uid, p) : [];
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       user_id: uid,
+      found: !!st,
+      history_count: st ? (st.history || []).length : 0,
+      list_count: list.length,
       daily: dailySeries(list),
       broadcasts: list.slice(-100),
-      current_samples: st.current_broadcast
+      current_samples: (st && st.current_broadcast)
         ? (st.current_broadcast.samples || []).slice(-720)
         : []
     }));
