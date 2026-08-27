@@ -190,6 +190,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
     <div class="seg" id="platform" style="margin-left:14px">
       <button data-k="twitcasting" class="on">ツイキャス</button>
       <button data-k="kick">Kick（日本）</button>
+      <button data-k="whowatch">ふわっち</button>
     </div>
     <div class="meta">
       <span class="chip" id="chip">—</span>
@@ -288,7 +289,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
   <div class="searchhint">
     下の一覧に<b>該当の配信者がいない場合はこちらから検索</b>してください。追跡していない配信者でも、
     過去の配信データ・平均同接・フォロワー数をその場で確認できます。<br>
-    配信者名でも、プロフィールURL（<code>https://twitcasting.tv/xxxxx</code> ／ <code>https://kick.com/xxxxx</code>）でも検索できます。
+    配信者名でも、プロフィールURL（<code>https://twitcasting.tv/xxxxx</code> ／ <code>https://kick.com/xxxxx</code> ／ <code>https://whowatch.tv/profile/w:xxxxx</code>）でも検索できます。
   </div>
 
   <div id="searchResults"></div>
@@ -301,9 +302,9 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
       <span>比較しているのは<b>各プラットフォームの同接上位50人</b>の平均です。プラットフォーム全体の平均ではありません。</span>
     </div>
     <div class="hero">
-      <div class="bigl">ツイキャス vs Kick（日本）</div>
+      <div class="bigl">ツイキャス vs Kick vs ふわっち</div>
       <canvas id="cmpChart" style="height:440px!important;margin-top:14px"></canvas>
-      <div class="note">両プラットフォームの「配信者1人あたりの平均同接」を同一軸で比較します。Kickは監視開始以降のデータのみ。</div>
+      <div class="note">3プラットフォームの「配信者1人あたりの平均同接」を同一軸で比較します。Kick・ふわっちは監視開始以降のデータが中心です。</div>
     </div>
     <div class="stats3" id="cmpStats"></div>
   </div>
@@ -365,7 +366,12 @@ const METRIC_LABEL={overall_avg:'全体平均同接',overall_avg_peak:'全体平
 
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const fmt=n=>(n==null||isNaN(n))?'—':Number(n).toLocaleString('ja-JP');
-const tcUrl=u=>String(u).startsWith('kick:')?('https://kick.com/'+String(u).slice(5)):('https://twitcasting.tv/'+encodeURIComponent(u).replace(/%3A/gi,':'));
+const tcUrl=u=>{
+  const v=String(u);
+  if(v.startsWith('kick:'))return 'https://kick.com/'+v.slice(5);
+  if(v.startsWith('ww:'))return 'https://whowatch.tv/profile/'+v.slice(3);
+  return 'https://twitcasting.tv/'+encodeURIComponent(v).replace(/%3A/gi,':');
+};
 function withAlpha(hex,a){const h=String(hex).replace('#','');
   return `rgba(${parseInt(h.slice(0,2),16)},${parseInt(h.slice(2,4),16)},${parseInt(h.slice(4,6),16)},${a})`;}
 function movingAvg(arr,win){
@@ -446,8 +452,8 @@ function broadcastsOf(st){if(!st)return[];
       started_at:b.started_at,live:false,archive:true,avg:null,peak:b.peak??null,total:b.total_final||0,
       title:b.title||null,duration:b.duration||0};
     return null;}).filter(Boolean).sort((a,b)=>a.t-b.t);}
-let RATIO={twitcasting:0.879,kick:0.857};
-let RATIO_VIEW={twitcasting:0.120,kick:0.169};
+let RATIO={twitcasting:0.879,kick:0.857,whowatch:0.85};
+let RATIO_VIEW={twitcasting:0.120,kick:0.169,whowatch:0.15};
 // 平均同接: 実測があれば実測、無ければ最高同接から推定
 function valOf(x){
   if(x.avg!=null)return x.avg;
@@ -542,7 +548,7 @@ function showTab(k){
 async function loadCompare(){
   try{
     const rows=await fetch(API+'/compare').then(r=>r.json());
-    const byP={twitcasting:[],kick:[]};
+    const byP={twitcasting:[],kick:[],whowatch:[]};
     rows.forEach(r=>{ if(byP[r.platform])byP[r.platform].push(r); });
     const tj=todayJst();
     const days=[...new Set(rows.map(r=>r.day))].sort().filter(d=>d!==tj);
@@ -551,12 +557,15 @@ async function loadCompare(){
     const win=winFor(days.length);
     const tw=movingAvg(mk(byP.twitcasting,'overall_avg'),win);
     const kk=movingAvg(mk(byP.kick,'overall_avg'),win);
+    const ww=movingAvg(mk(byP.whowatch,'overall_avg'),win);
     if(cmpChart)cmpChart.destroy();
     cmpChart=new Chart(document.getElementById('cmpChart'),{type:'line',
       data:{labels:days,datasets:[
         {label:'ツイキャス',data:tw,...lineStyle('#5b8cff'),spanGaps:true,
          pointRadius:days.length>45?0:4,borderWidth:3},
         {label:'Kick（日本）',data:kk,...lineStyle('#2ee6a8'),spanGaps:true,
+         pointRadius:days.length>45?0:4,borderWidth:3},
+        {label:'ふわっち',data:ww,...lineStyle('#ffb340',{fill:false}),spanGaps:true,
          pointRadius:days.length>45?0:4,borderWidth:3}
       ]},
       options:{responsive:true,maintainAspectRatio:false,...NOANIM,
@@ -571,12 +580,14 @@ async function loadCompare(){
           y:AXIS.y}}});
 
     const last=p=>{const a=byP[p].filter(x=>x.day!==tj);return a.length?a[a.length-1]:null;};
-    const t=last('twitcasting'),k=last('kick');
+    const t=last('twitcasting'),k=last('kick'),w=last('whowatch');
     document.getElementById('cmpStats').innerHTML=`
       <div class="st"><div class="l">ツイキャス 1人あたり平均</div><div class="v" style="color:#8fb0ff">${fmt(t&&t.overall_avg)}<span class="u">人</span></div></div>
       <div class="st"><div class="l">Kick 1人あたり平均</div><div class="v" style="color:#7fe6c4">${fmt(k&&k.overall_avg)}<span class="u">人</span></div></div>
       <div class="st"><div class="l">ツイキャス 配信者数</div><div class="v">${fmt(t&&t.broadcasters)}<span class="u">人</span></div></div>
       <div class="st"><div class="l">Kick 配信者数</div><div class="v">${fmt(k&&k.broadcasters)}<span class="u">人</span></div></div>
+      <div class="st"><div class="l">ふわっち 1人あたり平均</div><div class="v" style="color:#ffcd7a">${fmt(w&&w.overall_avg)}<span class="u">人</span></div></div>
+      <div class="st"><div class="l">ふわっち 配信者数</div><div class="v">${fmt(w&&w.broadcasters)}<span class="u">人</span></div></div>
       <div class="st"><div class="l">同接比（Kick/ツイキャス）</div><div class="v">${(t&&k&&t.overall_avg)?Math.round(k.overall_avg/t.overall_avg*100)+'%':'—'}</div></div>`;
   }catch(e){showErr('比較データ取得エラー: '+e.message);}
 }
@@ -651,7 +662,7 @@ function exportCsv(){
 }
 
 function render(){
-  document.getElementById('title').textContent = platform==='kick'?'Kick 全体トラッカー（日本）':'ツイキャス全体トラッカー';
+  document.getElementById('title').textContent = platform==='kick'?'Kick 全体トラッカー（日本）':platform==='whowatch'?'ふわっち全体トラッカー':'ツイキャス全体トラッカー';
   
   renderOverall();
   renderStats();
@@ -957,11 +968,15 @@ async function renderModal(uid){
 /* ===== 操作 ===== */
 function extractUserId(v){
   v=v.trim();
+  const w=v.match(/whowatch\.tv\/profile\/([^/?#]+)/i);
+  if(w)return 'ww:'+w[1];
   const k=v.match(/kick\.com\/([^/?#]+)/i);
   if(k)return 'kick:'+k[1];
   const t=v.match(/twitcasting\.tv\/([^/?#]+)/);
   if(t)return t[1];
   if(/^kick:/i.test(v))return 'kick:'+v.replace(/^kick:/i,'');
+  if(/^ww:/i.test(v))return 'ww:'+v.replace(/^ww:/i,'');
+  if(platform==='whowatch')return 'ww:'+v;
   return platform==='kick'?('kick:'+v):v;
 }
 let lookupCache=null;
