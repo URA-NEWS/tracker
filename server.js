@@ -91,7 +91,7 @@ async function bootstrap() {
     const bcs = await sbAll('tw_broadcasters', '?select=user_id,name,image,pinned,auto,last_live_at,best_peak,dormant,dormant_at,platform,kick_slug,kick_user_id&order=created_at.asc');
     config = { broadcasters: bcs || [] };
 
-    const brs = await sbAll('tw_broadcasts', '?select=id,user_id,started_at,ended_at,peak,total,duration,source,platform,avg_concurrent,sample_count,category&order=started_at.asc');
+    const brs = await sbAll('tw_broadcasts', '?select=id,user_id,started_at,ended_at,peak,total,duration,source,platform,avg_concurrent,sample_count,category,title&order=started_at.asc');
     const cutoff = new Date(Date.now() - SAMPLE_RETENTION_DAYS * 864e5).toISOString();
     const smp = await sbAll('tw_samples', `?select=broadcast_id,concurrent,total,ts&ts=gte.${cutoff}&order=ts.asc`, 1000, 300);
 
@@ -103,6 +103,7 @@ async function bootstrap() {
     });
 
     broadcasterStats = {};
+    const staleToClose = [];
     config.broadcasters.forEach(b => {
       broadcasterStats[b.user_id] = { user_id: b.user_id, current_broadcast: null, history: [] };
     });
@@ -120,12 +121,33 @@ async function bootstrap() {
         total_final: b.total ?? null,
         avg_concurrent: b.avg_concurrent ?? null,
         category: b.category ?? null,
+        title: b.title ?? null,
         duration: b.duration ?? null,
         samples: byBc[b.id] || []
       };
-      if (b.ended_at) broadcasterStats[b.user_id].history.push(obj);
-      else broadcasterStats[b.user_id].current_broadcast = obj;
+      if (b.ended_at) {
+        broadcasterStats[b.user_id].history.push(obj);
+      } else if (Date.now() - new Date(b.started_at).getTime() > 6 * 3600e3) {
+        // 6時間以上開きっぱなしは異常。サンプルの最終時刻で閉じる
+        const sm = (obj.samples || []).filter(x => x.concurrent > 0);
+        obj.ended_at = sm.length ? sm[sm.length - 1].timestamp : new Date().toISOString();
+        obj.avg_concurrent = sm.length ? Math.round(sm.reduce((t, x) => t + x.concurrent, 0) / sm.length) : null;
+        obj.peak = sm.length ? Math.max(...sm.map(x => x.concurrent)) : obj.peak;
+        obj.total_final = sm.length ? sm[sm.length - 1].total : obj.total_final;
+        obj.duration = Math.max(1, Math.round((new Date(obj.ended_at) - new Date(obj.started_at)) / 1000));
+        obj.sample_count = sm.length;
+        staleToClose.push({ uid: b.user_id, obj });
+        broadcasterStats[b.user_id].history.push(obj);
+      } else {
+        broadcasterStats[b.user_id].current_broadcast = obj;
+      }
     });
+    if (staleToClose.length) {
+      console.log(`[bootstrap] 開きっぱなしの配信 ${staleToClose.length} 件を終了処理`);
+      for (const x of staleToClose) {
+        try { await persistBroadcastEnd(x.uid, x.obj); } catch (e) {}
+      }
+    }
   } catch (e) {
     console.error('[bootstrap] Supabase読み込み失敗、ローカルにフォールバック:', e.message);
     config = loadJson(CONFIG_FILE, { broadcasters: [] });
@@ -171,7 +193,8 @@ async function persistBroadcastEnd(uid, b) {
       total: b.total_final ?? null,
       duration: b.duration ?? null,
       sample_count: b.sample_count ?? null,
-      category: b.category ?? null
+      category: b.category ?? null,
+      title: b.title ?? null
     }
   });
 }
@@ -296,6 +319,7 @@ async function fetchCurrentLiveApi(userId) {
       movie_id: String(m.id),
       concurrent: Number(m.current_view_count ?? 0),
       total: Number(m.total_view_count ?? 0),
+      title: m.title || m.subtitle || null,
       broadcaster: j.broadcaster || null
     };
   } catch (e) {
@@ -308,7 +332,7 @@ async function fetchBroadcastStats(userId) {
   const api = await fetchCurrentLiveApi(userId);
   if (api.ok) {
     if (!api.live) return null;
-    return { concurrent: api.concurrent, total: api.total, timestamp: new Date().toISOString() };
+    return { concurrent: api.concurrent, total: api.total, title: api.title || null, timestamp: new Date().toISOString() };
   }
 
   // フォールバック: 配信中かどうかだけ判定（視聴数は0）
@@ -397,10 +421,37 @@ async function backfillUser(userId, maxMovies = 500) {
       const id = `arc_${userId}_${m.id}`;
       if (broadcasterStats[userId].history.some(h => h.broadcast_id === id)) continue;
 
+      // 監視済みの同一配信があれば、そちらに最高同接・総来場者を補完して二重登録を防ぐ
+      const eMs = startedMs + dur * 1000;
+      const dup = (broadcasterStats[userId].history || []).find(h => {
+        if (h.source !== 'live') return false;
+        const hs = new Date(h.started_at).getTime();
+        return hs >= startedMs - 10 * 60000 && hs <= eMs + 20 * 60000;
+      });
+      if (dup) {
+        const np = Math.max(dup.peak || 0, peak);
+        const nt = Math.max(dup.total_final || 0, total);
+        const nd = Math.max(dup.duration || 0, dur);
+        if (np !== dup.peak || nt !== dup.total_final || nd !== dup.duration) {
+          dup.peak = np; dup.total_final = nt; dup.duration = nd;
+          if (!dup.title && m.title) dup.title = m.title;
+          if (USE_SB) {
+            try {
+              await sb('PATCH', 'tw_broadcasts', {
+                query: `?id=eq.${encodeURIComponent(dup.broadcast_id)}`,
+                body: { peak: np, total: nt, duration: nd, title: dup.title || null }
+              });
+            } catch (e) { console.error('tc merge:', e.message); }
+          }
+        }
+        continue;
+      }
+
       const obj = {
         broadcast_id: id,
         started_at: new Date(startedMs).toISOString(),
         ended_at: new Date(startedMs + dur * 1000).toISOString(),
+        title: m.title || m.subtitle || null,
         source: 'archive',
         peak, total_final: total, duration: dur,
         samples: []
@@ -409,7 +460,8 @@ async function backfillUser(userId, maxMovies = 500) {
       rows.push({
         id, user_id: userId,
         started_at: obj.started_at, ended_at: obj.ended_at,
-        peak, total, duration: dur, source: 'archive', platform: 'twitcasting'
+        peak, total, duration: dur, source: 'archive', platform: 'twitcasting',
+        title: obj.title
       });
       imported++;
     }
@@ -482,7 +534,8 @@ async function fetchKickLiveList() {
             viewers: Number(x.viewer_count || 0),
             started_at: x.started_at || null,
             language: x.language || null,
-            category: (x.category && (x.category.name || x.category)) || null
+            category: (x.category && (x.category.name || x.category)) || null,
+            title: x.stream_title || x.session_title || null
           };
         });
       }
@@ -595,11 +648,12 @@ async function backfillKick(b) {
       if (!dup.total_final || dup.total_final < total) {
         dup.total_final = total;
         if (!dup.duration) dup.duration = Math.round(durMs / 1000);
+        if (!dup.title && kTitle) dup.title = kTitle;
         if (USE_SB) {
           try {
             await sb('PATCH', 'tw_broadcasts', {
               query: `?id=eq.${encodeURIComponent(dup.broadcast_id)}`,
-              body: { total, duration: dup.duration }
+              body: { total, duration: dup.duration, title: dup.title || null }
             });
           } catch (e) { console.error('kick merge:', e.message); }
         }
@@ -607,10 +661,12 @@ async function backfillKick(b) {
       continue;
     }
 
+    const kTitle = v.session_title || ls.session_title || v.title || null;
     const obj = {
       broadcast_id: id,
       started_at: new Date(startedMs).toISOString(),
       ended_at: new Date(startedMs + durMs).toISOString(),
+      title: kTitle,
       source: 'archive', platform: 'kick',
       peak: null, total_final: total, duration: Math.round(durMs / 1000),
       samples: []
@@ -618,7 +674,8 @@ async function backfillKick(b) {
     broadcasterStats[uid].history.push(obj);
     rows.push({
       id, user_id: uid, started_at: obj.started_at, ended_at: obj.ended_at,
-      peak: null, total, duration: obj.duration, source: 'archive', platform: 'kick'
+      peak: null, total, duration: obj.duration, source: 'archive', platform: 'kick',
+      title: kTitle
     });
   }
 
@@ -897,7 +954,7 @@ async function checkOne(bc, now) {
       const b = {
         broadcast_id: `${uid}_${Date.now()}`, started_at: s.timestamp,
         samples: [s], source: 'live', platform: bc.platform || 'twitcasting',
-        category: s.category || null
+        category: s.category || null, title: s.title || null
       };
       broadcasterStats[uid].current_broadcast = b;
       console.log(`[${uid}] 配信開始 ${s.concurrent}`);
@@ -906,6 +963,7 @@ async function checkOne(bc, now) {
     } else {
       const b = broadcasterStats[uid].current_broadcast;
       b.miss = 0;
+      if (!b.title && s.title) b.title = s.title;
       b.samples.push(s);
       try { await persistSample(uid, b.broadcast_id, s); } catch (e) { console.error('persist sample:', e.message); }
     }
@@ -1186,6 +1244,21 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // 推定比率: GET /api/ratio
+  if (pathname === '/api/ratio' && req.method === 'GET') {
+    (async () => {
+      try {
+        if (!USE_SB) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('[]'); return; }
+        const rows = await sb('GET', 'tw_ratio_mv', { query: '?select=*' });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(rows || []));
+      } catch (e) {
+        res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('[]');
+      }
+    })();
+    return;
+  }
+
   // 全体の日別サマリー: GET /api/overall
   if (pathname === '/api/overall' && req.method === 'GET') {
     (async () => {
@@ -1445,6 +1518,27 @@ bootstrap().then(() => {
   setInterval(() => pruneAuto(), 60 * 60 * 1000);
   setTimeout(compactSamples, 3 * 60 * 1000);
   setInterval(compactSamples, 6 * 60 * 60 * 1000);
+  // 開きっぱなしの配信を定期的に閉じる
+  setInterval(() => {
+    const now = Date.now();
+    for (const uid of Object.keys(broadcasterStats)) {
+      const cb = broadcasterStats[uid].current_broadcast;
+      if (!cb) continue;
+      if (now - new Date(cb.started_at).getTime() > 12 * 3600e3) {
+        const sm = (cb.samples || []).filter(x => x.concurrent > 0);
+        cb.ended_at = new Date().toISOString();
+        cb.avg_concurrent = sm.length ? Math.round(sm.reduce((t, x) => t + x.concurrent, 0) / sm.length) : null;
+        cb.peak = sm.length ? Math.max(...sm.map(x => x.concurrent)) : null;
+        cb.total_final = sm.length ? sm[sm.length - 1].total : null;
+        cb.duration = Math.round((new Date(cb.ended_at) - new Date(cb.started_at)) / 1000);
+        cb.sample_count = sm.length;
+        broadcasterStats[uid].history.push(cb);
+        broadcasterStats[uid].current_broadcast = null;
+        persistBroadcastEnd(uid, cb).catch(() => {});
+        console.log(`[cleanup] ${uid} の長時間配信を終了処理`);
+      }
+    }
+  }, 60 * 60 * 1000);
   setTimeout(autoBackfillMissing, 30 * 1000);
   setInterval(autoBackfillMissing, 30 * 60 * 1000);
   setInterval(refreshAllUserInfo, 6 * 60 * 60 * 1000);
