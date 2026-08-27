@@ -218,11 +218,24 @@ async function fetchUserInfo(userId) {
       if (r.ok) {
         const j = await r.json();
         if (j && j.user) {
-          return {
+          const apiRes = {
             name: j.user.name || j.user.screen_id || userId,
             image: (j.user.image || '').replace(/^http:/, 'https:').replace(/_normal\.(jpg|png)/, '_400x400.$1') || null,
-            followers: Number(j.user.supporter_count ?? 0) || null
+            followers: Number(j.user.supporter_count ?? j.user.supporterCount ?? 0) || null
           };
+          if (!apiRes.followers) {
+            try {
+              const h = await fetch(`https://twitcasting.tv/${encodeURIComponent(userId)}`, { headers: { 'User-Agent': UA, 'Accept-Language': 'ja' } });
+              if (h.ok) {
+                const html2 = await h.text();
+                let fm = html2.match(/"followerCount"\s*:\s*"?(\d+)"?/)
+                      || html2.match(/data-follower-count=["'](\d+)["']/)
+                      || html2.match(/フォロワー[^0-9]{0,40}?([\d,]+)/);
+                if (fm) apiRes.followers = parseInt(String(fm[1]).replace(/,/g, ''), 10) || null;
+              }
+            } catch (e) {}
+          }
+          return apiRes;
         }
       }
       if (r.status === 404) return null;
@@ -234,7 +247,17 @@ async function fetchUserInfo(userId) {
     const html = await res.text();
     if (html.includes('お探しのページは見つかりません') || html.includes('Page Not Found')) return null;
 
-    let name = null, image = null;
+    let name = null, image = null, followers = null;
+
+    // フォロワー数をHTMLから拾う
+    let fm = html.match(/"followerCount"\s*:\s*"?(\d+)"?/)
+          || html.match(/data-follower-count=["'](\d+)["']/)
+          || html.match(/フォロワー[^0-9]{0,40}?([\d,]+)/);
+    if (fm) followers = parseInt(String(fm[1]).replace(/,/g, ''), 10) || null;
+    if (!followers) {
+      const sm2 = html.match(/サポーター[^0-9]{0,40}?([\d,]+)/);
+      if (sm2) followers = parseInt(sm2[1].replace(/,/g, ''), 10) || null;
+    }
 
     // 配信者名: <title> の "○○ (@id) 's Live" から取る（og:title は配信タイトルなので使わない）
     const t = html.match(/<title>([\s\S]*?)<\/title>/i);
@@ -258,7 +281,7 @@ async function fetchUserInfo(userId) {
     }
     if (image) image = image.replace(/^http:/, 'https:').replace(/_bigger\.(jpg|png)/, '_400x400.$1');
 
-    return { name: name || userId, image: image || null };
+    return { name: name || userId, image: image || null, followers };
   } catch (e) {
     console.error(`fetchUserInfo (${userId}):`, e.message);
     return null;
@@ -1299,6 +1322,49 @@ const server = http.createServer((req, res) => {
       const r = await compactSamples();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(r));
+    })();
+    return;
+  }
+
+  // 生データ確認: GET /api/debug-user/<id>
+  if (pathname.startsWith('/api/debug-user/') && req.method === 'GET') {
+    (async () => {
+      const uid = decodeURIComponent(pathname.replace('/api/debug-user/', ''));
+      const out = { user_id: uid };
+      if (isKick(uid)) {
+        const b = config.broadcasters.find(x => x.user_id === uid) || { user_id: uid, kick_slug: kickSlug(uid) };
+        const slug = await resolveKickSlug(b);
+        out.slug = slug;
+        try {
+          const r = await fetch(`https://kick.com/api/v2/channels/${encodeURIComponent(slug)}`, { headers: KICK_HDRS });
+          out.status = r.status;
+          const j = await r.json();
+          out.followers_count = j.followers_count ?? null;
+          out.stream_title = j.livestream?.session_title ?? null;
+          out.keys = Object.keys(j).slice(0, 40);
+        } catch (e) { out.error = e.message; }
+      } else {
+        try {
+          const r = await fetch(`https://apiv2.twitcasting.tv/users/${encodeURIComponent(uid)}`, {
+            headers: { 'X-Api-Version': '2.0', Authorization: `Basic ${TC_BASIC}`, Accept: 'application/json' }
+          });
+          out.user_status = r.status;
+          out.user_raw = await r.json();
+        } catch (e) { out.user_error = e.message; }
+        try {
+          const r2 = await fetch(`https://apiv2.twitcasting.tv/users/${encodeURIComponent(uid)}/current_live`, {
+            headers: { 'X-Api-Version': '2.0', Authorization: `Basic ${TC_BASIC}`, Accept: 'application/json' }
+          });
+          out.live_status = r2.status;
+          const j2 = await r2.json();
+          out.live_movie_keys = j2.movie ? Object.keys(j2.movie) : null;
+          out.live_title = j2.movie ? (j2.movie.title ?? null) : null;
+          out.live_subtitle = j2.movie ? (j2.movie.subtitle ?? null) : null;
+        } catch (e) { out.live_error = e.message; }
+        out.parsedUserInfo = await fetchUserInfo(uid);
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(out, null, 2));
     })();
     return;
   }
