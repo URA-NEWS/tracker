@@ -22,6 +22,9 @@ const KICK_ID = process.env.KICK_CLIENT_ID || '';
 const KICK_SECRET = process.env.KICK_CLIENT_SECRET || '';
 const USE_KICK = !!(KICK_ID && KICK_SECRET);
 const KICK_LIMIT = 50;
+const SAMPLE_RETENTION_DAYS = 7;   // 生サンプルの保持日数
+const MONITOR_CONCURRENCY = 10;    // 監視の並列数
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 let kickToken = null, kickTokenExp = 0;
 
 const CONFIG_FILE = path.join(__dirname, 'config.json');
@@ -87,8 +90,9 @@ async function bootstrap() {
     const bcs = await sbAll('tw_broadcasters', '?select=user_id,name,image,pinned,auto,last_live_at,best_peak,dormant,dormant_at,platform,kick_slug,kick_user_id&order=created_at.asc');
     config = { broadcasters: bcs || [] };
 
-    const brs = await sbAll('tw_broadcasts', '?select=id,user_id,started_at,ended_at,peak,total,duration,source,platform&order=started_at.asc');
-    const smp = await sbAll('tw_samples', '?select=broadcast_id,concurrent,total,ts&order=ts.asc', 1000, 300);
+    const brs = await sbAll('tw_broadcasts', '?select=id,user_id,started_at,ended_at,peak,total,duration,source,platform,avg_concurrent,sample_count,category&order=started_at.asc');
+    const cutoff = new Date(Date.now() - SAMPLE_RETENTION_DAYS * 864e5).toISOString();
+    const smp = await sbAll('tw_samples', `?select=broadcast_id,concurrent,total,ts&ts=gte.${cutoff}&order=ts.asc`, 1000, 300);
 
     const byBc = {};
     (smp || []).forEach(s => {
@@ -113,6 +117,8 @@ async function bootstrap() {
         platform: b.platform || 'twitcasting',
         peak: b.peak ?? null,
         total_final: b.total ?? null,
+        avg_concurrent: b.avg_concurrent ?? null,
+        category: b.category ?? null,
         duration: b.duration ?? null,
         samples: byBc[b.id] || []
       };
@@ -153,11 +159,19 @@ async function persistBroadcastStart(uid, b) {
     prefer: 'resolution=merge-duplicates'
   });
 }
-async function persistBroadcastEnd(bid, endedAt) {
+async function persistBroadcastEnd(uid, b) {
   if (!USE_SB) { saveJson(STATS_FILE, broadcasterStats); return; }
   await sb('PATCH', 'tw_broadcasts', {
-    query: `?id=eq.${encodeURIComponent(bid)}`,
-    body: { ended_at: endedAt }
+    query: `?id=eq.${encodeURIComponent(b.broadcast_id)}`,
+    body: {
+      ended_at: b.ended_at,
+      avg_concurrent: b.avg_concurrent ?? null,
+      peak: b.peak ?? null,
+      total: b.total_final ?? null,
+      duration: b.duration ?? null,
+      sample_count: b.sample_count ?? null,
+      category: b.category ?? null
+    }
   });
 }
 async function persistSample(uid, bid, s) {
@@ -466,7 +480,8 @@ async function fetchKickLiveList() {
             image: x.thumbnail || null,
             viewers: Number(x.viewer_count || 0),
             started_at: x.started_at || null,
-            language: x.language || null
+            language: x.language || null,
+            category: (x.category && (x.category.name || x.category)) || null
           };
         });
       }
@@ -730,7 +745,7 @@ async function discoverTopLives() {
 
   // 実力スコア = これまでの最高同接（今回の値で更新）
   const scoreOf = b => Number(b.best_peak || 0);
-  const activeAutos = () => config.broadcasters.filter(b => b.auto && !b.dormant);
+  const activeAutos = () => config.broadcasters.filter(b => b.auto && !b.dormant && (b.platform || 'twitcasting') === 'twitcasting');
 
   for (const c of cands) {
     const ex = byId.get(c.user_id);
@@ -778,7 +793,7 @@ async function discoverTopLives() {
       name: c.name || c.user_id,
       image: (c.image || '').replace(/^http:/, 'https:').replace(/_normal\.(jpg|png)/, '_400x400.$1') || null,
       pinned: false, auto: true, dormant: false,
-      best_peak: c.viewers, last_live_at: now
+      best_peak: c.viewers, last_live_at: now, platform: 'twitcasting'
     };
     config.broadcasters.push(b);
     byId.set(b.user_id, b);
@@ -803,92 +818,134 @@ async function discoverTopLives() {
 }
 
 // 自動枠の整理: 実績下位を「休止」にする（データは消さない）
-async function pruneAuto(keep = AUTO_LIMIT) {
-  const autos = config.broadcasters.filter(b => b.auto && !b.dormant);
-  if (autos.length <= keep) return { slept: 0 };
-  autos.sort((a, b) => (a.best_peak || 0) - (b.best_peak || 0));
-  const drop = autos.slice(0, autos.length - keep);
+async function pruneAuto() {
   const now = new Date().toISOString();
-  for (const b of drop) {
-    b.dormant = true; b.dormant_at = now;
-    try { await persistBroadcasterAdd(b); } catch (e) { console.error('prune:', e.message); }
+  const result = {};
+  for (const [plat, keep] of [['twitcasting', AUTO_LIMIT], ['kick', KICK_LIMIT]]) {
+    const autos = config.broadcasters.filter(
+      b => b.auto && !b.dormant && (b.platform || 'twitcasting') === plat);
+    if (autos.length <= keep) { result[plat] = 0; continue; }
+    autos.sort((a, b) => (a.best_peak || 0) - (b.best_peak || 0));
+    const drop = autos.slice(0, autos.length - keep);
+    for (const b of drop) {
+      b.dormant = true; b.dormant_at = now;
+      try { await persistBroadcasterAdd(b); } catch (e) { console.error('prune:', e.message); }
+    }
+    result[plat] = drop.length;
   }
   if (!USE_SB) saveJson(CONFIG_FILE, config);
-  return { slept: drop.length };
+  return { slept: result };
 }
 
 // ---------- 監視ループ ----------
 let monitoring = false;
-const offlineCheckedAt = {};   // user_id -> ms
-const OFFLINE_INTERVAL = 5 * 60 * 1000; // オフラインの人は5分に1回だけ確認
+const offlineCheckedAt = {};
+const OFFLINE_INTERVAL = 5 * 60 * 1000;
+
+async function checkOne(bc, now) {
+  const uid = bc.user_id;
+  if (!broadcasterStats[uid]) broadcasterStats[uid] = { user_id: uid, current_broadcast: null, history: [] };
+  const wasLive = !!broadcasterStats[uid].current_broadcast;
+
+  if (!wasLive) {
+    const last = offlineCheckedAt[uid] || 0;
+    if (now - last < OFFLINE_INTERVAL) return;
+    offlineCheckedAt[uid] = now;
+  }
+
+  let s = null;
+  if (bc.platform === 'kick') {
+    const live = await getKickLive();
+    const hit = (live || []).find(x => x.user_id === uid);
+    if (hit) s = { concurrent: hit.viewers, total: 0, timestamp: new Date().toISOString(), category: hit.category || null };
+    else {
+      const ch = await fetchKickChannel(kickSlug(uid));
+      s = (ch && ch.live) ? { concurrent: ch.viewers, total: 0, timestamp: new Date().toISOString() } : null;
+    }
+  } else {
+    s = await fetchBroadcastStats(uid);
+  }
+
+  if (s) {
+    if (!wasLive) {
+      const b = {
+        broadcast_id: `${uid}_${Date.now()}`, started_at: s.timestamp,
+        samples: [s], source: 'live', platform: bc.platform || 'twitcasting',
+        category: s.category || null
+      };
+      broadcasterStats[uid].current_broadcast = b;
+      console.log(`[${uid}] 配信開始 ${s.concurrent}`);
+      try { await persistBroadcastStart(uid, b); await persistSample(uid, b.broadcast_id, s); }
+      catch (e) { console.error('persist start:', e.message); }
+    } else {
+      const b = broadcasterStats[uid].current_broadcast;
+      b.samples.push(s);
+      try { await persistSample(uid, b.broadcast_id, s); } catch (e) { console.error('persist sample:', e.message); }
+    }
+    if (s.concurrent > (bc.best_peak || 0)) {
+      bc.best_peak = s.concurrent;
+      bc.last_live_at = s.timestamp;
+      try { await persistBroadcasterAdd(bc); } catch (e) {}
+    }
+    if (!USE_SB) saveJson(STATS_FILE, broadcasterStats);
+  } else if (wasLive) {
+    const b = broadcasterStats[uid].current_broadcast;
+    b.ended_at = new Date().toISOString();
+    const sm = (b.samples || []).filter(x => x.concurrent > 0);
+    b.avg_concurrent = sm.length ? Math.round(sm.reduce((t, x) => t + x.concurrent, 0) / sm.length) : null;
+    b.peak = sm.length ? Math.max(...sm.map(x => x.concurrent)) : null;
+    b.total_final = sm.length ? sm[sm.length - 1].total : null;
+    b.duration = Math.round((new Date(b.ended_at) - new Date(b.started_at)) / 1000);
+    b.sample_count = sm.length;
+    broadcasterStats[uid].history.push(b);
+    broadcasterStats[uid].current_broadcast = null;
+    offlineCheckedAt[uid] = now;
+    console.log(`[${uid}] 配信終了 avg=${b.avg_concurrent} peak=${b.peak} n=${sm.length}`);
+    try { await persistBroadcastEnd(uid, b); } catch (e) { console.error('persist end:', e.message); }
+    if (!USE_SB) saveJson(STATS_FILE, broadcasterStats);
+  }
+}
 
 async function monitorBroadcasters() {
   if (monitoring) return;
   if (!config.broadcasters || !config.broadcasters.length) return;
   monitoring = true;
   const now = Date.now();
+  const targets = config.broadcasters.filter(b => !b.dormant);
   try {
-    for (const bc of config.broadcasters) {
-      const uid = bc.user_id;
-      if (bc.dormant) continue;   // 休止中は監視しない（データは保持）
-      if (!broadcasterStats[uid]) broadcasterStats[uid] = { user_id: uid, current_broadcast: null, history: [] };
-
-      const wasLive = !!broadcasterStats[uid].current_broadcast;
-      if (!wasLive) {
-        const last = offlineCheckedAt[uid] || 0;
-        if (now - last < OFFLINE_INTERVAL) continue;
-        offlineCheckedAt[uid] = now;
-      }
-
-      let s;
-      if (bc.platform === 'kick') {
-        const live = await getKickLive();
-        const hit = (live || []).find(x => x.user_id === uid);
-        if (hit) s = { concurrent: hit.viewers, total: 0, timestamp: new Date().toISOString() };
-        else {
-          // 一覧に出ない場合のみ個別確認（言語フィルタ外の可能性）
-          const ch = await fetchKickChannel(kickSlug(uid));
-          s = (ch && ch.live) ? { concurrent: ch.viewers, total: 0, timestamp: new Date().toISOString() } : null;
-        }
-      } else {
-        s = await fetchBroadcastStats(uid);
-      }
-
-      if (s) {
-        if (!wasLive) {
-          const b = { broadcast_id: `${uid}_${Date.now()}`, started_at: s.timestamp, samples: [s], source: 'live' };
-          broadcasterStats[uid].current_broadcast = b;
-          console.log(`[${uid}] 配信開始 ${s.concurrent}/${s.total}`);
-          try { await persistBroadcastStart(uid, b); await persistSample(uid, b.broadcast_id, s); }
-          catch (e) { console.error('persist start:', e.message); }
-        } else {
-          const b = broadcasterStats[uid].current_broadcast;
-          b.samples.push(s);
-          try { await persistSample(uid, b.broadcast_id, s); }
-          catch (e) { console.error('persist sample:', e.message); }
-        }
-        // 実績更新
-        if (s.concurrent > (bc.best_peak || 0)) {
-          bc.best_peak = s.concurrent;
-          bc.last_live_at = s.timestamp;
-          try { await persistBroadcasterAdd(bc); } catch (e) {}
-        }
-        if (!USE_SB) saveJson(STATS_FILE, broadcasterStats);
-      } else if (wasLive) {
-        const b = broadcasterStats[uid].current_broadcast;
-        b.ended_at = new Date().toISOString();
-        broadcasterStats[uid].history.push(b);
-        broadcasterStats[uid].current_broadcast = null;
-        offlineCheckedAt[uid] = now;
-        console.log(`[${uid}] 配信終了 samples=${b.samples.length}`);
-        try { await persistBroadcastEnd(b.broadcast_id, b.ended_at); }
-        catch (e) { console.error('persist end:', e.message); }
-        if (!USE_SB) saveJson(STATS_FILE, broadcasterStats);
-      }
+    for (let i = 0; i < targets.length; i += MONITOR_CONCURRENCY) {
+      const chunk = targets.slice(i, i + MONITOR_CONCURRENCY);
+      await Promise.all(chunk.map(b => checkOne(b, now).catch(e => console.error(b.user_id, e.message))));
     }
   } finally {
     monitoring = false;
   }
+}
+
+// ---------- サンプル圧縮・保持期間 ----------
+async function compactSamples() {
+  if (!USE_SB) return { ok: false, reason: 'local' };
+  const cutoff = new Date(Date.now() - SAMPLE_RETENTION_DAYS * 864e5).toISOString();
+  try {
+    // 1) 時間別集計に退避
+    await sb('POST', 'rpc/tw_compact_samples', { body: { cutoff } });
+  } catch (e) {
+    console.error('[compact]', e.message);
+    return { ok: false, reason: e.message };
+  }
+  // メモリ側も古いサンプルを落とす
+  const cutMs = Date.now() - SAMPLE_RETENTION_DAYS * 864e5;
+  for (const uid of Object.keys(broadcasterStats)) {
+    const st = broadcasterStats[uid];
+    st.history = (st.history || []).map(b => {
+      if (b.samples && b.samples.length && new Date(b.started_at).getTime() < cutMs) {
+        return { ...b, samples: [] };
+      }
+      return b;
+    });
+  }
+  console.log('[compact] 完了');
+  return { ok: true };
 }
 
 // ---------- HTTP ----------
@@ -907,6 +964,8 @@ const server = http.createServer((req, res) => {
       storage: USE_SB ? 'supabase' : 'local',
       official_api: USE_TC_API,
       kick_api: USE_KICK,
+      retention_days: SAMPLE_RETENTION_DAYS,
+      monitor_interval_sec: 60,
       auto_slots: `${config.broadcasters.filter(b => b.auto && !b.dormant).length}/${AUTO_LIMIT}`,
       dormant: config.broadcasters.filter(b => b.dormant).length,
       broadcasters: config.broadcasters.length,
@@ -955,6 +1014,140 @@ const server = http.createServer((req, res) => {
       const r = await kickProbe(slug);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ slug, results: r }, null, 2));
+    })();
+    return;
+  }
+
+  // 2プラットフォーム比較: GET /api/compare
+  if (pathname === '/api/compare' && req.method === 'GET') {
+    (async () => {
+      try {
+        if (!USE_SB) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('[]'); return; }
+        const rows = await sbAll('tw_daily_overall', '?select=*&order=day.asc');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(rows));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    })();
+    return;
+  }
+
+  // 全体ヒートマップ: GET /api/heatmap?platform=
+  if (pathname === '/api/heatmap' && req.method === 'GET') {
+    (async () => {
+      try {
+        if (!USE_SB) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('[]'); return; }
+        const plat = (url.parse(req.url, true).query.platform) || 'twitcasting';
+        const rows = await sbAll('tw_heatmap_overall', `?select=*&platform=eq.${encodeURIComponent(plat)}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(rows));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: e.message }));
+      }
+    })();
+    return;
+  }
+
+  // 配信時間の分析: GET /api/duration?platform=
+  if (pathname === '/api/duration' && req.method === 'GET') {
+    (async () => {
+      try {
+        if (!USE_SB) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('[]'); return; }
+        const plat = (url.parse(req.url, true).query.platform) || 'twitcasting';
+        const rows = await sbAll('tw_duration_analysis', `?select=*&platform=eq.${encodeURIComponent(plat)}&order=sort_key.asc`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(rows));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: e.message }));
+      }
+    })();
+    return;
+  }
+
+  // CSV出力: GET /api/export.csv?platform=&type=daily|broadcasters
+  if (pathname === '/api/export.csv' && req.method === 'GET') {
+    (async () => {
+      const q = url.parse(req.url, true).query;
+      const plat = q.platform || 'twitcasting';
+      const type = q.type || 'daily';
+      const esc = v => {
+        if (v == null) return '';
+        const t = String(v);
+        return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+      };
+      let head = [], rows = [];
+      if (type === 'broadcasters') {
+        head = ['user_id', 'name', 'platform', 'pinned', 'auto', 'dormant', 'best_peak',
+                'broadcasts', 'avg_peak', 'avg_concurrent', 'last_live_at'];
+        rows = config.broadcasters
+          .filter(b => (b.platform || 'twitcasting') === plat)
+          .map(b => {
+            const st = broadcasterStats[b.user_id] || {};
+            const hist = (st.history || []);
+            const peaks = hist.map(h => h.peak).filter(v => v != null);
+            const avgs = hist.map(h => h.avg_concurrent).filter(v => v != null);
+            return [b.user_id, b.name, b.platform || 'twitcasting', b.pinned, b.auto, b.dormant,
+              b.best_peak || 0, hist.length,
+              peaks.length ? Math.round(peaks.reduce((t, v) => t + v, 0) / peaks.length) : '',
+              avgs.length ? Math.round(avgs.reduce((t, v) => t + v, 0) / avgs.length) : '',
+              b.last_live_at || ''];
+          });
+      } else {
+        head = ['day', 'platform', 'broadcasts', 'broadcasters', 'overall_peak_avg',
+                'overall_avg', 'measured_broadcasts', 'overall_total_viewers', 'day_max_peak', 'avg_duration_sec'];
+        try {
+          const data = USE_SB
+            ? await sbAll('tw_daily_overall', `?select=*&platform=eq.${encodeURIComponent(plat)}&order=day.asc`)
+            : [];
+          rows = data.map(r => head.map(k => r[k]));
+        } catch (e) { /* empty */ }
+      }
+      const csv = '\uFEFF' + [head.join(','), ...rows.map(r => r.map(esc).join(','))].join('\r\n');
+      res.writeHead(200, {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': `attachment; filename="tracker-${type}-${plat}-${new Date().toISOString().slice(0,10)}.csv"`
+      });
+      res.end(csv);
+    })();
+    return;
+  }
+
+  // 急上昇アラート: GET /api/alerts?platform=&threshold=50
+  if (pathname === '/api/alerts' && req.method === 'GET') {
+    const q = url.parse(req.url, true).query;
+    const plat = q.platform || 'twitcasting';
+    const th = Number(q.threshold || 50);
+    const out = [];
+    for (const b of config.broadcasters) {
+      if ((b.platform || 'twitcasting') !== plat) continue;
+      const st = broadcasterStats[b.user_id];
+      if (!st) continue;
+      const done = (st.history || [])
+        .map(h => ({ t: new Date(h.started_at).getTime(), v: h.avg_concurrent ?? h.peak }))
+        .filter(x => x.v != null).sort((a, c) => a.t - c.t);
+      if (done.length < 4) continue;
+      const n = Math.min(3, Math.floor(done.length / 2));
+      const rec = done.slice(-n).map(x => x.v), prv = done.slice(-2 * n, -n).map(x => x.v);
+      const r = Math.round(rec.reduce((t, v) => t + v, 0) / rec.length);
+      const p = Math.round(prv.reduce((t, v) => t + v, 0) / prv.length);
+      if (!p) continue;
+      const pct = Math.round((r - p) / p * 100);
+      if (pct >= th) out.push({ user_id: b.user_id, name: b.name, image: b.image, pct, recent: r, prev: p, n });
+    }
+    out.sort((a, b) => b.pct - a.pct);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(out));
+    return;
+  }
+
+  // サンプル圧縮を今すぐ実行: POST /api/compact
+  if (pathname === '/api/compact' && req.method === 'POST') {
+    (async () => {
+      const r = await compactSamples();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
     })();
     return;
   }
@@ -1173,6 +1366,14 @@ const server = http.createServer((req, res) => {
   }
 
   if (pathname.startsWith('/api/config/broadcasters/') && req.method === 'DELETE') {
+    if (ADMIN_TOKEN) {
+      const t = url.parse(req.url, true).query.token || req.headers['x-admin-token'];
+      if (t !== ADMIN_TOKEN) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'forbidden' }));
+        return;
+      }
+    }
     (async () => {
       const uid = decodeURIComponent(pathname.replace('/api/config/broadcasters/', ''));
       config.broadcasters = config.broadcasters.filter(b => b.user_id !== uid);
@@ -1206,10 +1407,14 @@ bootstrap().then(() => {
   discoverTopLives();
   setInterval(discoverTopLives, 5 * 60 * 1000);
   if (USE_KICK) { discoverKick(); setInterval(discoverKick, 5 * 60 * 1000); }
+  setTimeout(async () => { const r = await pruneAuto(); console.log('[prune]', JSON.stringify(r)); }, 10 * 1000);
+  setInterval(() => pruneAuto(), 60 * 60 * 1000);
+  setTimeout(compactSamples, 3 * 60 * 1000);
+  setInterval(compactSamples, 6 * 60 * 60 * 1000);
   setTimeout(autoBackfillMissing, 30 * 1000);
   setInterval(autoBackfillMissing, 30 * 60 * 1000);
   setInterval(refreshAllUserInfo, 6 * 60 * 60 * 1000);
-  setInterval(monitorBroadcasters, 15000);
+  setInterval(monitorBroadcasters, 60000);
   monitorBroadcasters();
 
   // Render無料プランのスリープ防止（自分の公開URLを10分ごとに叩く）
