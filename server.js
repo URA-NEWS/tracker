@@ -634,7 +634,7 @@ async function fetchKickLiveList() {
             started_at: x.started_at || null,
             language: x.language || null,
             category: (x.category && (x.category.name || x.category)) || null,
-            title: x.stream_title || x.session_title || null
+            title: x.stream_title || x.session_title || x.title || (x.stream && x.stream.stream_title) || null
           };
         });
       }
@@ -666,7 +666,8 @@ async function fetchKickChannel(slug) {
       name: c.slug || slug,
       image: c.banner_picture || null,
       live: !!(c.stream && c.stream.is_live),
-      viewers: Number((c.stream && c.stream.viewer_count) || 0)
+      viewers: Number((c.stream && c.stream.viewer_count) || 0),
+      title: c.stream_title || (c.stream && c.stream.stream_title) || null
     };
   } catch (e) { return null; }
 }
@@ -703,6 +704,17 @@ async function resolveKickSlug(b) {
 }
 
 // Kick の過去配信を取り込む（非公開API）
+async function fetchKickStreamTitle(b) {
+  const slug = await resolveKickSlug(b);
+  if (!slug) return null;
+  try {
+    const r = await fetch(`https://kick.com/api/v2/channels/${encodeURIComponent(slug)}`, { headers: KICK_HDRS });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return (j.livestream && (j.livestream.session_title || j.livestream.slug)) || null;
+  } catch (e) { return null; }
+}
+
 async function fetchKickFollowers(b) {
   const slug = await resolveKickSlug(b);
   if (!slug) return null;
@@ -1085,12 +1097,34 @@ async function checkOne(bc, now) {
       };
       broadcasterStats[uid].current_broadcast = b;
       console.log(`[${uid}] 配信開始 ${s.concurrent}`);
+      if (!b.title && (bc.platform || 'twitcasting') === 'kick') {
+        try {
+          const t = await fetchKickStreamTitle(bc);
+          if (t) {
+            b.title = t;
+            if (USE_SB) await sb('PATCH', 'tw_broadcasts', {
+              query: `?id=eq.${encodeURIComponent(b.broadcast_id)}`, body: { title: t }
+            });
+          }
+        } catch (e) {}
+      }
       try { await persistBroadcastStart(uid, b); await persistSample(uid, b.broadcast_id, s); }
       catch (e) { console.error('persist start:', e.message); }
     } else {
       const b = broadcasterStats[uid].current_broadcast;
       b.miss = 0;
       if (!b.title && s.title) b.title = s.title;
+      if (!b.title && (bc.platform || 'twitcasting') === 'kick' && (b.samples.length % 10 === 0)) {
+        try {
+          const t = await fetchKickStreamTitle(bc);
+          if (t) {
+            b.title = t;
+            if (USE_SB) await sb('PATCH', 'tw_broadcasts', {
+              query: `?id=eq.${encodeURIComponent(b.broadcast_id)}`, body: { title: t }
+            });
+          }
+        } catch (e) {}
+      }
       b.samples.push(s);
       try { await persistSample(uid, b.broadcast_id, s); } catch (e) { console.error('persist sample:', e.message); }
     }
