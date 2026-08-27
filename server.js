@@ -526,6 +526,59 @@ async function discoverKick() {
   return { ok: true, added, slept, auto_slots: `${act}/${KICK_LIMIT}`, candidates: list.length };
 }
 
+// Kick 非公開APIの疎通テスト（Cloudflareで弾かれる可能性あり）
+const KICK_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+const KICK_HDRS = {
+  'User-Agent': KICK_UA,
+  'Accept': 'application/json, text/plain, */*',
+  'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
+  'Referer': 'https://kick.com/',
+  'Origin': 'https://kick.com'
+};
+
+async function kickProbe(slug) {
+  const urls = [
+    `https://kick.com/api/v2/channels/${encodeURIComponent(slug)}/videos`,
+    `https://kick.com/api/v1/channels/${encodeURIComponent(slug)}/videos`,
+    `https://kick.com/api/v2/channels/${encodeURIComponent(slug)}`
+  ];
+  const out = [];
+  for (const u of urls) {
+    const rec = { url: u };
+    try {
+      const r = await fetch(u, { headers: KICK_HDRS });
+      rec.status = r.status;
+      rec.contentType = r.headers.get('content-type');
+      rec.cfRay = r.headers.get('cf-ray') || null;
+      const t = await r.text();
+      rec.len = t.length;
+      if ((rec.contentType || '').includes('json')) {
+        try {
+          const j = JSON.parse(t);
+          const arr = Array.isArray(j) ? j : (j.data || j.videos || null);
+          if (Array.isArray(arr)) {
+            rec.items = arr.length;
+            rec.sample = arr.slice(0, 2).map(v => ({
+              id: v.id, created_at: v.created_at || v.start_time || null,
+              session_title: (v.session_title || (v.livestream && v.livestream.session_title)) || null,
+              duration: v.duration || (v.livestream && v.livestream.duration) || null,
+              viewer_count: v.viewer_count ?? (v.livestream && v.livestream.viewer_count) ?? null,
+              viewers: v.views ?? v.view_count ?? null
+            }));
+          } else {
+            rec.keys = Object.keys(j).slice(0, 25);
+            if (j.previous_livestreams) rec.previous_livestreams = j.previous_livestreams.length;
+          }
+        } catch (e) { rec.parseError = e.message; rec.head = t.slice(0, 200); }
+      } else {
+        rec.head = t.slice(0, 200);
+      }
+    } catch (e) { rec.error = e.message; }
+    out.push(rec);
+  }
+  return out;
+}
+
 // ---------- 自動収集（同接上位50人） ----------
 const AUTO_LIMIT = 50;
 
@@ -754,6 +807,17 @@ const server = http.createServer((req, res) => {
       out.parsed = await fetchBroadcastStats(uid);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(out, null, 2));
+    })();
+    return;
+  }
+
+  // Kick 非公開API疎通テスト: GET /api/kick-probe/<slug>
+  if (pathname.startsWith('/api/kick-probe/') && req.method === 'GET') {
+    (async () => {
+      const slug = decodeURIComponent(pathname.replace('/api/kick-probe/', ''));
+      const r = await kickProbe(slug);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ slug, results: r }, null, 2));
     })();
     return;
   }
