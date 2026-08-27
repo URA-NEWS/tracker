@@ -228,10 +228,15 @@ async function fetchUserInfo(userId) {
               const h = await fetch(`https://twitcasting.tv/${encodeURIComponent(userId)}`, { headers: { 'User-Agent': UA, 'Accept-Language': 'ja' } });
               if (h.ok) {
                 const html2 = await h.text();
-                let fm = html2.match(/"followerCount"\s*:\s*"?(\d+)"?/)
-                      || html2.match(/data-follower-count=["'](\d+)["']/)
-                      || html2.match(/フォロワー[^0-9]{0,40}?([\d,]+)/);
-                if (fm) apiRes.followers = parseInt(String(fm[1]).replace(/,/g, ''), 10) || null;
+                const pats = [
+                  /"followerCount"\s*:\s*"?([\d,]+)"?/,
+                  /data-follower-count=["']([\d,]+)["']/,
+                  /id=["']fanCount["'][^>]*>\s*([\d,]+)/,
+                  /class=["'][^"']*tw-follower-count[^"']*["'][^>]*>\s*([\d,]+)/,
+                  /フォロワー[\s\S]{0,80}?([\d,]{1,12})/,
+                  /サポーター[\s\S]{0,80}?([\d,]{1,12})/
+                ];
+                for (const re of pats) { const mm = html2.match(re); if (mm) { apiRes.followers = parseInt(mm[1].replace(/,/g,''),10)||null; break; } }
               }
             } catch (e) {}
           }
@@ -250,9 +255,17 @@ async function fetchUserInfo(userId) {
     let name = null, image = null, followers = null;
 
     // フォロワー数をHTMLから拾う
-    let fm = html.match(/"followerCount"\s*:\s*"?(\d+)"?/)
-          || html.match(/data-follower-count=["'](\d+)["']/)
-          || html.match(/フォロワー[^0-9]{0,40}?([\d,]+)/);
+    const FOLLOW_PATTERNS = [
+      /"followerCount"\s*:\s*"?([\d,]+)"?/,
+      /data-follower-count=["']([\d,]+)["']/,
+      /id=["']fanCount["'][^>]*>\s*([\d,]+)/,
+      /class=["'][^"']*tw-follower-count[^"']*["'][^>]*>\s*([\d,]+)/,
+      /class=["'][^"']*follower[^"']*["'][^>]*>[^<]*?([\d,]+)/i,
+      /フォロワー[\s\S]{0,80}?([\d,]{1,12})/,
+      /サポーター[\s\S]{0,80}?([\d,]{1,12})/
+    ];
+    let fm = null;
+    for (const re of FOLLOW_PATTERNS) { fm = html.match(re); if (fm) break; }
     if (fm) followers = parseInt(String(fm[1]).replace(/,/g, ''), 10) || null;
     if (!followers) {
       const sm2 = html.match(/サポーター[^0-9]{0,40}?([\d,]+)/);
@@ -289,9 +302,8 @@ async function fetchUserInfo(userId) {
 }
 
 // 起動時に既存配信者の名前・アイコンを更新
-async function refreshAllUserInfo() {
-  for (const b of config.broadcasters) {
-    if (b.dormant) continue;
+async function refreshOne(b) {
+  {
     try {
       let changed = false;
       if ((b.platform || 'twitcasting') === 'kick') {
@@ -301,7 +313,7 @@ async function refreshAllUserInfo() {
         }
       } else {
         const info = await fetchUserInfo(b.user_id);
-        if (!info) continue;
+        if (!info) return;
         if (info.name !== b.name || info.image !== b.image) {
           b.name = info.name; b.image = info.image; changed = true;
         }
@@ -314,7 +326,17 @@ async function refreshAllUserInfo() {
       }
     } catch (e) { console.error('refresh:', e.message); }
   }
+}
+
+async function refreshAllUserInfo() {
+  const targets = config.broadcasters.filter(b => !b.dormant);
+  const C = 6;
+  for (let i = 0; i < targets.length; i += C) {
+    await Promise.all(targets.slice(i, i + C).map(b => refreshOne(b).catch(() => {})));
+  }
   if (!USE_SB) saveJson(CONFIG_FILE, config);
+  const n = config.broadcasters.filter(b => b.follower_count).length;
+  console.log(`[refresh] 完了 フォロワー取得済み ${n}/${config.broadcasters.length}`);
 }
 
 // ---------- ツイキャス: 配信状態・視聴数 ----------
@@ -1122,6 +1144,85 @@ async function compactSamples() {
   return { ok: true };
 }
 
+// ---------- 集計ヘルパー ----------
+function ratioOf(plat) {
+  return plat === 'kick' ? { peak: 0.857, view: 0.169 } : { peak: 0.879, view: 0.120 };
+}
+function estAvg(b, plat) {
+  const r = ratioOf(plat);
+  if (b.avg_concurrent != null) return b.avg_concurrent;
+  if (b.peak != null) return Math.round(b.peak * r.peak);
+  if (b.total_final) return Math.round(b.total_final * r.view);
+  return null;
+}
+function broadcastList(uid, plat) {
+  const st = broadcasterStats[uid];
+  if (!st) return [];
+  const src = [...(st.history || [])];
+  if (st.current_broadcast) src.push({ ...st.current_broadcast, _live: true });
+  return src.map(b => {
+    const sm = (b.samples || []).filter(x => x.concurrent > 0);
+    const avg = b.avg_concurrent != null ? b.avg_concurrent
+      : (sm.length ? Math.round(sm.reduce((t, x) => t + x.concurrent, 0) / sm.length) : null);
+    const peak = b.peak != null ? b.peak : (sm.length ? Math.max(...sm.map(x => x.concurrent)) : null);
+    const total = b.total_final != null ? b.total_final : (sm.length ? sm[sm.length - 1].total : 0);
+    const o = {
+      t: new Date(b.started_at).getTime(),
+      started_at: b.started_at,
+      live: !!b._live,
+      archive: b.source === 'archive',
+      avg, peak, total: total || 0,
+      title: b.title || null,
+      duration: b.duration || 0
+    };
+    o.val = estAvg({ avg_concurrent: avg, peak, total_final: total }, plat);
+    return o;
+  }).filter(x => x.val != null).sort((a, b) => a.t - b.t);
+}
+function dailySeries(list) {
+  const m = {};
+  for (const x of list) {
+    const k = new Date(x.t + 9 * 3600e3).toISOString().slice(0, 10);
+    (m[k] = m[k] || { v: [], p: [], n: 0 });
+    m[k].v.push(x.val);
+    if (x.peak != null) m[k].p.push(x.peak);
+    m[k].n++;
+  }
+  return Object.keys(m).sort().map(k => ({
+    day: k,
+    val: Math.round(m[k].v.reduce((t, v) => t + v, 0) / m[k].v.length),
+    peak: m[k].p.length ? Math.max(...m[k].p) : null,
+    n: m[k].n
+  }));
+}
+function summarize(uid, plat) {
+  const st = broadcasterStats[uid];
+  const list = broadcastList(uid, plat);
+  const done = list.filter(x => !x.live);
+  const vals = list.map(x => x.val);
+  const pk = list.map(x => x.peak).filter(v => v != null);
+  const cut = Date.now() - 30 * 864e5;
+  const w30 = done.filter(x => x.t >= cut);
+  const cb = st.current_broadcast;
+  const lastSample = cb && cb.samples && cb.samples.length ? cb.samples[cb.samples.length - 1] : null;
+  const withTot = list.filter(x => x.total > 0);
+  return {
+    live: !!cb,
+    cur: lastSample ? lastSample.concurrent : null,
+    curTotal: lastSample ? lastSample.total : null,
+    n: list.length,
+    allAvg: vals.length ? Math.round(vals.reduce((t, v) => t + v, 0) / vals.length) : null,
+    recent: list.length ? list[list.length - 1].val : null,
+    best: pk.length ? Math.max(...pk) : null,
+    d30avg: w30.length ? Math.round(w30.reduce((t, x) => t + x.val, 0) / w30.length) : null,
+    d30n: w30.length,
+    lastTs: done.length ? done[done.length - 1].t : null,
+    retention: withTot.length
+      ? Math.round(withTot.reduce((t, x) => t + (x.val / x.total * 100), 0) / withTot.length)
+      : null
+  };
+}
+
 // ---------- HTTP ----------
 const server = http.createServer((req, res) => {
   const pathname = url.parse(req.url, true).pathname;
@@ -1686,8 +1787,37 @@ const server = http.createServer((req, res) => {
   }
 
   if (pathname === '/api/twitcas/stats' && req.method === 'GET') {
+    const plat = (url.parse(req.url, true).query.platform) || null;
+    const out = {};
+    const byId = new Map(config.broadcasters.map(b => [b.user_id, b]));
+    for (const uid of Object.keys(broadcasterStats)) {
+      const bc = byId.get(uid);
+      const p = (bc && bc.platform) || 'twitcasting';
+      if (plat && p !== plat) continue;
+      out[uid] = summarize(uid, p);
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(broadcasterStats));
+    res.end(JSON.stringify(out));
+    return;
+  }
+
+  // 配信者1人の詳細: GET /api/broadcaster?id=
+  if (pathname === '/api/broadcaster' && req.method === 'GET') {
+    const uid = String(url.parse(req.url, true).query.id || '');
+    const st = broadcasterStats[uid];
+    if (!st) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end('{}'); return; }
+    const bc = config.broadcasters.find(b => b.user_id === uid);
+    const p = (bc && bc.platform) || 'twitcasting';
+    const list = broadcastList(uid, p);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      user_id: uid,
+      daily: dailySeries(list),
+      broadcasts: list.slice(-100),
+      current_samples: st.current_broadcast
+        ? (st.current_broadcast.samples || []).slice(-720)
+        : []
+    }));
     return;
   }
 
