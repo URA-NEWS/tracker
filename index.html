@@ -636,9 +636,10 @@ async function loadAlerts(){
 }
 
 async function refreshFollowers(){
+  const reset=confirm('OK: 既存の値を破棄して全件取り直す ／ キャンセル: 未取得のみ更新');
   showErrPersist('フォロワーを取得中…（1〜2分かかります）');
   try{
-    const j=await fetch(API+'/refresh-followers',{method:'POST'}).then(r=>r.json());
+    const j=await fetch(API+(reset?'/reset-followers':'/refresh-followers'),{method:'POST'}).then(r=>r.json());
     showErr(`フォロワー取得済み ${j.after}/${j.total}人（前回 ${j.before}人）`);
     await loadAll();
   }catch(e){showErr('エラー: '+e.message);}
