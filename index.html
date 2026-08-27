@@ -77,7 +77,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
 
 /* ===== 個別リスト（表のみ） ===== */
 .tbl{background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden}
-.thd,.trow{display:grid;grid-template-columns:34px 44px minmax(160px,2.2fr) 118px 104px 100px 62px;
+.thd,.trow{display:grid;grid-template-columns:34px 44px minmax(160px,2.2fr) 100px 118px 104px 62px;
   gap:12px;align-items:center;padding:13px 16px}
 .thd{background:var(--panel2);font-size:12px;color:var(--sub);letter-spacing:.06em;font-weight:800}
 .trow{border-top:1px solid var(--line);cursor:pointer;transition:.14s}
@@ -255,7 +255,8 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
     <div class="seg" id="listSort">
       <button data-k="pct" class="on">通算比 上昇順</button>
       <button data-k="pctAsc">通算比 下落順</button>
-      <button data-k="recent">直近平均順</button>
+      <button data-k="allavg">全体平均順</button>
+      <button data-k="recent">最新配信順</button>
       <button data-k="d30">30日平均順</button>
       <button data-k="best">最高同接順</button>
       <button data-k="fol">フォロワー順</button>
@@ -765,17 +766,18 @@ function renderTable(){
     if(listSort==='best')return (b.best||0)-(a.best||0);
     if(listSort==='freq')return (b.n30||0)-(a.n30||0);
     if(listSort==='recent')return (b.recent||0)-(a.recent||0);
+    if(listSort==='allavg')return (b.allAvg||0)-(a.allAvg||0);
     const ap=a.vsAll, bp=b.vsAll;
-    if(ap==null&&bp==null)return (b.recent||0)-(a.recent||0);
+    if(ap==null&&bp==null)return (b.allAvg||0)-(a.allAvg||0);
     if(ap==null)return 1;
     if(bp==null)return -1;
     return listSort==='pctAsc'? ap-bp : bp-ap;
   });
 
   const hd=`<div class="thd"><span></span><span></span><span>配信者</span>
-    <span style="text-align:right">直近の平均同接<br><span style="font-weight:400">（人）</span></span>
-    <span style="text-align:right">通算比<br><span style="font-weight:400">（増減率）</span></span>
     <span style="text-align:right" class="hidesm">フォロワー<br><span style="font-weight:400">（人）</span></span>
+    <span style="text-align:right">全体の平均同接<br><span style="font-weight:400">（全配信の平均・人）</span></span>
+    <span style="text-align:right">最新配信の増減率<br><span style="font-weight:400">（全体平均との比）</span></span>
     <span></span></div>`;
 
   const body=rows.length?rows.map((r,i)=>{
@@ -791,9 +793,9 @@ function renderTable(){
           <span class="tag ${r.b.pinned?'pin':''}">${r.b.pinned?'手動':'自動'}</span>
           ${r.b.dormant?'<span class="tag dor">休止</span>':''}</div>
       </div>
-      <div class="v2">${fmt(r.recent)}<span class="u">人</span><small>${r.live?'配信中':'最新の配信'}</small></div>
-      <div class="pct ${cls}">${pct}<small style="display:block;font-size:10px;color:#5f6a83;font-weight:600;margin-top:2px">通算 ${fmt(r.allAvg)}人</small></div>
       <div class="v2 hidesm">${fmt(r.fol)}<span class="u">人</span><small>フォロワー</small></div>
+      <div class="v2">${fmt(r.allAvg)}<span class="u">人</span><small>全${r.bs.length}配信の平均</small></div>
+      <div class="pct ${cls}">${pct}<small style="display:block;font-size:10px;color:#5f6a83;font-weight:600;margin-top:2px">最新 ${fmt(r.recent)}人${r.live?'（配信中）':''}</small></div>
       <div class="acts2">
         ${r.b.dormant?`<button class="iconbtn" onclick="event.stopPropagation();wake('${esc(r.b.user_id)}')" title="再開">▶</button>`:''}
         <a class="iconbtn" href="${tcUrl(r.b.user_id)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="配信ページ">↗</a>
@@ -836,13 +838,13 @@ function renderModal(uid){
       <button class="x" onclick="closeModal()">✕</button>
     </div>
     <div class="kpis">
+      <div class="kpi"><div class="l">フォロワー</div><div class="v">${fmt(b.follower_count)}<span class="u">人</span></div></div>
       <div class="kpi"><div class="l">現在の同接</div><div class="v">${live?fmt(l&&l.concurrent)+'<span class="u">人</span>':'—'}</div></div>
-      <div class="kpi"><div class="l">直近の平均同接</div><div class="v">${fmt(tr?tr.recent:(bs.length?valOf(bs[bs.length-1]):null))}<span class="u">人</span></div></div>
+      <div class="kpi" style="background:rgba(91,140,255,.14)"><div class="l">全体の平均同接（全${bs.length}配信）</div><div class="v">${fmt(allAvgM)}<span class="u">人</span></div></div>
+      <div class="kpi"><div class="l">最新配信の平均同接</div><div class="v">${fmt(bs.length?valOf(bs[bs.length-1]):null)}<span class="u">人</span></div></div>
       <div class="kpi"><div class="l">直近30日の平均</div><div class="v">${fmt(w30.avg)}<span class="u">人</span></div></div>
       <div class="kpi"><div class="l">30日の配信数</div><div class="v">${w30.count}<span class="u">本</span></div></div>
       <div class="kpi"><div class="l">定着率</div><div class="v">${ret==null?'—':ret+'<span class="u">%</span>'}</div></div>
-      <div class="kpi"><div class="l">フォロワー</div><div class="v">${fmt(b.follower_count)}<span class="u">人</span></div></div>
-      <div class="kpi"><div class="l">通算の平均同接</div><div class="v">${fmt(allAvgM)}<span class="u">人</span></div></div>
       <div class="kpi"><div class="l">直近${trM?trM.n:5}配信 → その前</div><div class="v" style="font-size:15px">${trM?fmt(trM.recent)+' → '+fmt(trM.prev):'—'}</div></div>
       <div class="kpi"><div class="l">最終配信</div><div class="v" style="font-size:17px">${lastAgoM==null?'—':(live?'配信中':lastAgoM===0?'今日':lastAgoM+'日前')}</div></div>
       <div class="kpi"><div class="l">最高同接</div><div class="v">${fmt(peak)}<span class="u">人</span></div></div>
@@ -971,6 +973,7 @@ function renderLookup(d){
       <button class="x" onclick="closeModal()">✕</button>
     </div>
     <div class="kpis">
+      <div class="kpi"><div class="l">フォロワー</div><div class="v">${fmt(b.follower_count)}<span class="u">人</span></div></div>
       <div class="kpi"><div class="l">現在の同接</div><div class="v">${P.live?fmt(P.current)+'<span class="u">人</span>':'—'}</div></div>
       <div class="kpi"><div class="l">直近の平均同接</div><div class="v">${fmt(bs.length?valOf(bs[bs.length-1]):null)}<span class="u">人</span></div></div>
       <div class="kpi"><div class="l">直近30日の平均</div><div class="v">${fmt(w30.avg)}<span class="u">人</span></div></div>
