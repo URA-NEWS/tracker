@@ -88,7 +88,7 @@ async function bootstrap() {
   }
   console.log('[storage] supabase');
   try {
-    const bcs = await sbAll('tw_broadcasters', '?select=user_id,name,image,pinned,auto,last_live_at,best_peak,dormant,dormant_at,platform,kick_slug,kick_user_id&order=created_at.asc');
+    const bcs = await sbAll('tw_broadcasters', '?select=user_id,name,image,pinned,auto,last_live_at,best_peak,dormant,dormant_at,platform,kick_slug,kick_user_id,follower_count&order=created_at.asc');
     config = { broadcasters: bcs || [] };
 
     const brs = await sbAll('tw_broadcasts', '?select=id,user_id,started_at,ended_at,peak,total,duration,source,platform,avg_concurrent,sample_count,category,title&order=started_at.asc');
@@ -163,7 +163,9 @@ async function persistBroadcasterAdd(b) {
     pinned: !!b.pinned, auto: !!b.auto, dormant: !!b.dormant,
     dormant_at: b.dormant_at ?? null, last_live_at: b.last_live_at ?? null,
     best_peak: Number(b.best_peak || 0), platform: b.platform || 'twitcasting',
-    kick_slug: b.kick_slug ?? null, kick_user_id: b.kick_user_id ?? null
+    kick_slug: b.kick_slug ?? null, kick_user_id: b.kick_user_id ?? null,
+    follower_count: b.follower_count ?? null,
+    follower_updated_at: b.follower_updated_at ?? null
   };
   await sb('POST', 'tw_broadcasters', { body: [row], prefer: 'resolution=merge-duplicates' });
 }
@@ -218,7 +220,8 @@ async function fetchUserInfo(userId) {
         if (j && j.user) {
           return {
             name: j.user.name || j.user.screen_id || userId,
-            image: (j.user.image || '').replace(/^http:/, 'https:').replace(/_normal\.(jpg|png)/, '_400x400.$1') || null
+            image: (j.user.image || '').replace(/^http:/, 'https:').replace(/_normal\.(jpg|png)/, '_400x400.$1') || null,
+            followers: Number(j.user.supporter_count ?? 0) || null
           };
         }
       }
@@ -265,14 +268,26 @@ async function fetchUserInfo(userId) {
 // 起動時に既存配信者の名前・アイコンを更新
 async function refreshAllUserInfo() {
   for (const b of config.broadcasters) {
-    if (b.dormant || b.platform === 'kick') continue;
+    if (b.dormant) continue;
     try {
-      const info = await fetchUserInfo(b.user_id);
-      if (!info) continue;
-      if (info.name !== b.name || info.image !== b.image) {
-        b.name = info.name; b.image = info.image;
+      let changed = false;
+      if ((b.platform || 'twitcasting') === 'kick') {
+        const f = await fetchKickFollowers(b);
+        if (f && f !== b.follower_count) {
+          b.follower_count = f; b.follower_updated_at = new Date().toISOString(); changed = true;
+        }
+      } else {
+        const info = await fetchUserInfo(b.user_id);
+        if (!info) continue;
+        if (info.name !== b.name || info.image !== b.image) {
+          b.name = info.name; b.image = info.image; changed = true;
+        }
+        if (info.followers && info.followers !== b.follower_count) {
+          b.follower_count = info.followers; b.follower_updated_at = new Date().toISOString(); changed = true;
+        }
+      }
+      if (changed) {
         await persistBroadcasterAdd(b);
-        console.log(`[${b.user_id}] プロフィール更新: ${b.name}`);
       }
     } catch (e) { console.error('refresh:', e.message); }
   }
@@ -342,7 +357,7 @@ async function fetchBroadcastStats(userId) {
 }
 
 // ---------- 過去配信の取り込み ----------
-const backfillJob = { running: false, done: 0, totalTargets: 0, imported: 0, current: null, finishedAt: null, error: null };
+const backfillJob = { running: false, done: 0, totalTargets: 0, imported: 0, titleFixed: 0, current: null, finishedAt: null, error: null };
 
 function findMissingArchive() {
   return config.broadcasters
@@ -365,21 +380,21 @@ async function autoBackfillMissing() {
 async function runBackfillJob(targets) {
   if (backfillJob.running) return;
   backfillJob.running = true;
-  backfillJob.done = 0; backfillJob.imported = 0; backfillJob.error = null;
+  backfillJob.done = 0; backfillJob.imported = 0; backfillJob.titleFixed = 0; backfillJob.error = null;
   backfillJob.totalTargets = targets.length; backfillJob.finishedAt = null;
   console.log(`[backfill] 開始 ${targets.length}人`);
   for (const uid of targets) {
     backfillJob.current = uid;
     try {
       const r = await backfillUser(uid);
-      if (r.ok) backfillJob.imported += r.imported || 0;
+      if (r.ok) { backfillJob.imported += r.imported || 0; backfillJob.titleFixed += r.titleFixed || 0; }
     } catch (e) { backfillJob.error = e.message; }
     backfillJob.done++;
   }
   backfillJob.current = null;
   backfillJob.running = false;
   backfillJob.finishedAt = new Date().toISOString();
-  console.log(`[backfill] 完了 ${backfillJob.imported}件`);
+  console.log(`[backfill] 完了 新規${backfillJob.imported}件 / タイトル補完${backfillJob.titleFixed}件`);
 }
 
 async function backfillUser(userId, maxMovies = 500) {
@@ -388,7 +403,7 @@ async function backfillUser(userId, maxMovies = 500) {
     return b ? await backfillKick(b) : { ok: false, reason: 'not_found', imported: 0 };
   }
   if (!USE_TC_API) return { ok: false, reason: 'no_credentials' };
-  let offset = 0, imported = 0, scanned = 0, totalCount = null;
+  let offset = 0, imported = 0, scanned = 0, totalCount = null, titleFixed = 0;
 
   while (scanned < maxMovies) {
     let j;
@@ -419,7 +434,23 @@ async function backfillUser(userId, maxMovies = 500) {
       if (!peak && !total) continue;
 
       const id = `arc_${userId}_${m.id}`;
-      if (broadcasterStats[userId].history.some(h => h.broadcast_id === id)) continue;
+      const existing = broadcasterStats[userId].history.find(h => h.broadcast_id === id);
+      if (existing) {
+        // 既に取り込み済み。タイトルが未取得なら補完する
+        const t = m.title || m.subtitle || null;
+        if (t && !existing.title) {
+          existing.title = t;
+          titleFixed++;
+          if (USE_SB) {
+            try {
+              await sb('PATCH', 'tw_broadcasts', {
+                query: `?id=eq.${encodeURIComponent(id)}`, body: { title: t }
+              });
+            } catch (e) { console.error('title patch:', e.message); }
+          }
+        }
+        continue;
+      }
 
       // 監視済みの同一配信があれば、そちらに最高同接・総来場者を補完して二重登録を防ぐ
       const eMs = startedMs + dur * 1000;
@@ -477,7 +508,7 @@ async function backfillUser(userId, maxMovies = 500) {
 
   broadcasterStats[userId].history.sort((a, b) => new Date(a.started_at) - new Date(b.started_at));
   if (!USE_SB) saveJson(STATS_FILE, broadcasterStats);
-  return { ok: true, imported, scanned };
+  return { ok: true, imported, scanned, titleFixed };
 }
 
 // ---------- Kick ----------
@@ -604,6 +635,18 @@ async function resolveKickSlug(b) {
 }
 
 // Kick の過去配信を取り込む（非公開API）
+async function fetchKickFollowers(b) {
+  const slug = await resolveKickSlug(b);
+  if (!slug) return null;
+  try {
+    const r = await fetch(`https://kick.com/api/v2/channels/${encodeURIComponent(slug)}`, { headers: KICK_HDRS });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const n = Number(j.followers_count ?? j.followersCount ?? 0);
+    return n || null;
+  } catch (e) { return null; }
+}
+
 async function backfillKick(b) {
   const slug = await resolveKickSlug(b);
   if (!slug) return { ok: false, reason: 'slug_unresolved', imported: 0 };
@@ -620,6 +663,7 @@ async function backfillKick(b) {
   if (!broadcasterStats[uid]) broadcasterStats[uid] = { user_id: uid, current_broadcast: null, history: [] };
 
   const rows = [];
+  let kTitleFixed = 0;
   for (const v of vids) {
     const ls = v.livestream || v;
     const startedRaw = ls.start_time || v.created_at || ls.created_at;
@@ -635,7 +679,22 @@ async function backfillKick(b) {
     const peak = null;
 
     const id = `karc_${uid}_${v.id || ls.id}`;
-    if (broadcasterStats[uid].history.some(h => h.broadcast_id === id)) continue;
+    const existingK = broadcasterStats[uid].history.find(h => h.broadcast_id === id);
+    if (existingK) {
+      const t = v.session_title || ls.session_title || v.title || null;
+      if (t && !existingK.title) {
+        existingK.title = t;
+        kTitleFixed++;
+        if (USE_SB) {
+          try {
+            await sb('PATCH', 'tw_broadcasts', {
+              query: `?id=eq.${encodeURIComponent(id)}`, body: { title: t }
+            });
+          } catch (e) { console.error('kick title patch:', e.message); }
+        }
+      }
+      continue;
+    }
 
     // 同じ配信を監視済みなら、その行の総来場者だけ補完する（二重登録を防ぐ）
     const sMs = startedMs, eMs = startedMs + durMs;
@@ -686,7 +745,7 @@ async function backfillKick(b) {
   try { await persistBroadcasterAdd(b); } catch (e) {}
   broadcasterStats[uid].history.sort((a, c) => new Date(a.started_at) - new Date(c.started_at));
   if (!USE_SB) saveJson(STATS_FILE, broadcasterStats);
-  return { ok: true, imported: rows.length, slug };
+  return { ok: true, imported: rows.length, titleFixed: kTitleFixed, slug };
 }
 
 // Kick の自動収集（同接上位・日本語）
@@ -1244,6 +1303,145 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // 配信者検索: GET /api/search?q=&platform=
+  if (pathname === '/api/search' && req.method === 'GET') {
+    (async () => {
+      const q = url.parse(req.url, true).query;
+      const word = String(q.q || '').trim();
+      const plat = q.platform || 'twitcasting';
+      if (!word) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('[]'); return; }
+      const out = [];
+      try {
+        if (plat === 'kick') {
+          const slug = word.match(/kick\.com\/([^/?#]+)/i)?.[1] || word.replace(/^kick:/i, '');
+          // 完全一致
+          const ch = await fetchKickChannel(slug);
+          if (ch) out.push({ user_id: KICK_PREFIX + slug, name: ch.name, image: ch.image, platform: 'kick', live: ch.live });
+          // 部分一致（非公開検索API）
+          try {
+            const r = await fetch(`https://kick.com/api/search?searched_word=${encodeURIComponent(word)}`, { headers: KICK_HDRS });
+            if (r.ok) {
+              const j = await r.json();
+              const chans = j.channels || j.data?.channels || [];
+              for (const c of chans.slice(0, 10)) {
+                const uid = KICK_PREFIX + (c.slug || c.user?.username);
+                if (!c.slug || out.some(x => x.user_id === uid)) continue;
+                out.push({ user_id: uid, name: c.user?.username || c.slug, image: c.user?.profile_pic || null, platform: 'kick' });
+              }
+            }
+          } catch (e) {}
+        } else {
+          const direct = word.match(/twitcasting\.tv\/([^/?#]+)/)?.[1] || word;
+          const info = await fetchUserInfo(direct);
+          if (info) out.push({ user_id: direct, name: info.name, image: info.image, platform: 'twitcasting', followers: info.followers || null });
+          if (USE_TC_API) {
+            try {
+              const r = await fetch(`https://apiv2.twitcasting.tv/search/users?words=${encodeURIComponent(word)}&limit=10&lang=ja`, {
+                headers: { 'X-Api-Version': '2.0', Authorization: `Basic ${TC_BASIC}`, Accept: 'application/json' }
+              });
+              if (r.ok) {
+                const j = await r.json();
+                for (const u of (j.users || []).slice(0, 10)) {
+                  if (out.some(x => x.user_id === u.screen_id)) continue;
+                  out.push({
+                    user_id: u.screen_id, name: u.name || u.screen_id,
+                    image: (u.image || '').replace(/^http:/, 'https:'),
+                    platform: 'twitcasting', followers: Number(u.supporter_count ?? 0) || null,
+                    live: !!u.is_live
+                  });
+                }
+              }
+            } catch (e) {}
+          }
+        }
+      } catch (e) { /* ignore */ }
+      // 既に追跡中かどうかを付与
+      const known = new Set(config.broadcasters.map(b => b.user_id));
+      out.forEach(x => { x.tracked = known.has(x.user_id); });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(out));
+    })();
+    return;
+  }
+
+  // 追跡外の配信者をその場で分析: GET /api/lookup?id=
+  if (pathname === '/api/lookup' && req.method === 'GET') {
+    (async () => {
+      const uid = String(url.parse(req.url, true).query.id || '').trim();
+      if (!uid) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end('{}'); return; }
+      try {
+        const plat = isKick(uid) ? 'kick' : 'twitcasting';
+        let profile = null, broadcasts = [];
+
+        if (plat === 'kick') {
+          const b = { user_id: uid, kick_slug: kickSlug(uid) };
+          const ch = await fetchKickChannel(kickSlug(uid));
+          const fol = await fetchKickFollowers(b);
+          profile = ch ? { name: ch.name, image: ch.image, followers: fol, live: ch.live, current: ch.viewers } : null;
+          const slug = await resolveKickSlug(b);
+          if (slug) {
+            const r = await fetch(`https://kick.com/api/v2/channels/${encodeURIComponent(slug)}/videos`, { headers: KICK_HDRS });
+            if (r.ok) {
+              const j = await r.json();
+              const vids = Array.isArray(j) ? j : (j.data || []);
+              broadcasts = vids.map(v => {
+                const ls = v.livestream || v;
+                const st = ls.start_time || v.created_at;
+                if (!st) return null;
+                const ms = new Date(String(st).replace(' ', 'T') + (String(st).endsWith('Z') ? '' : 'Z')).getTime();
+                const dur = Number(v.duration || ls.duration || 0);
+                const total = Number(v.views ?? v.view_count ?? 0);
+                if (!ms || !dur || !total) return null;
+                return { started_at: new Date(ms).toISOString(), title: v.session_title || ls.session_title || null,
+                         peak: null, total, duration: Math.round(dur / 1000) };
+              }).filter(Boolean);
+            }
+          }
+        } else {
+          const info = await fetchUserInfo(uid);
+          const cur = await fetchCurrentLiveApi(uid);
+          profile = info ? { name: info.name, image: info.image, followers: info.followers || null,
+                             live: !!(cur.ok && cur.live), current: cur.live ? cur.concurrent : null } : null;
+          if (USE_TC_API) {
+            let offset = 0;
+            for (let page = 0; page < 4; page++) {
+              const r = await fetch(`https://apiv2.twitcasting.tv/users/${encodeURIComponent(uid)}/movies?offset=${offset}&limit=50`, {
+                headers: { 'X-Api-Version': '2.0', Authorization: `Basic ${TC_BASIC}`, Accept: 'application/json' }
+              });
+              if (!r.ok) break;
+              const j = await r.json();
+              const ms = j.movies || [];
+              if (!ms.length) break;
+              for (const m of ms) {
+                if (m.is_live) continue;
+                const startedMs = Number(m.created) * 1000;
+                if (!startedMs) continue;
+                broadcasts.push({
+                  started_at: new Date(startedMs).toISOString(),
+                  title: m.title || m.subtitle || null,
+                  peak: Number(m.max_view_count ?? 0) || null,
+                  total: Number(m.total_view_count ?? m.current_view_count ?? 0),
+                  duration: Number(m.duration || 0)
+                });
+              }
+              offset += ms.length;
+              if (j.total_count != null && offset >= j.total_count) break;
+            }
+          }
+        }
+        if (!profile) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'not_found' })); return; }
+        broadcasts.sort((a, b) => new Date(a.started_at) - new Date(b.started_at));
+        const known = config.broadcasters.some(b => b.user_id === uid);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ user_id: uid, platform: plat, tracked: known, profile, broadcasts }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    })();
+    return;
+  }
+
   // 推定比率: GET /api/ratio
   if (pathname === '/api/ratio' && req.method === 'GET') {
     (async () => {
@@ -1455,7 +1653,8 @@ const server = http.createServer((req, res) => {
         if (!info) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: `ユーザーが見つかりません: ${uid}` })); return; }
 
         const b = { user_id: uid, name: info.name, image: info.image, pinned: true, auto: false, dormant: false, best_peak: 0, platform: plat };
-        if (plat === 'kick') b.kick_slug = kickSlug(uid);
+        if (plat === 'kick') { b.kick_slug = kickSlug(uid); const f = await fetchKickFollowers(b); if (f) { b.follower_count = f; b.follower_updated_at = new Date().toISOString(); } }
+        else if (info.followers) { b.follower_count = info.followers; b.follower_updated_at = new Date().toISOString(); }
         config.broadcasters.push(b);
         broadcasterStats[uid] = { user_id: uid, current_broadcast: null, history: [] };
         await persistBroadcasterAdd(b);
@@ -1541,7 +1740,7 @@ bootstrap().then(() => {
   }, 60 * 60 * 1000);
   setTimeout(autoBackfillMissing, 30 * 1000);
   setInterval(autoBackfillMissing, 30 * 60 * 1000);
-  setInterval(refreshAllUserInfo, 6 * 60 * 60 * 1000);
+  setInterval(refreshAllUserInfo, 3 * 60 * 60 * 1000);
   setInterval(monitorBroadcasters, 60000);
   monitorBroadcasters();
 
