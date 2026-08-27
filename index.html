@@ -840,7 +840,18 @@ async function renderModal(uid){
     catch(e){ document.getElementById('modal').innerHTML='<div class="empty">取得エラー</div>'; return; }
   }
   const d=modalData||{daily:[],broadcasts:[],current_samples:[]};
-  const daily=d.daily||[], bs=d.broadcasts||[], nz=(d.current_samples||[]).filter(x=>x.concurrent>0);
+  const bs=d.broadcasts||[];
+  let daily=d.daily||[];
+  if(!daily.length&&bs.length){
+    const m={};
+    bs.forEach(x=>{const k=new Date(x.t+9*3600e3).toISOString().slice(0,10);
+      (m[k]=m[k]||{v:[],p:[],n:0}); m[k].v.push(x.val);
+      if(x.peak!=null)m[k].p.push(x.peak); m[k].n++;});
+    daily=Object.keys(m).sort().map(k=>({day:k,
+      val:Math.round(m[k].v.reduce((t,v)=>t+v,0)/m[k].v.length),
+      peak:m[k].p.length?Math.max(...m[k].p):null,n:m[k].n}));
+  }
+  const nz=(d.current_samples||[]).filter(x=>x.concurrent>0);
   const live=!!S.live;
   const lastAgo=S.lastTs?Math.floor((Date.now()-S.lastTs)/864e5):null;
 
@@ -868,7 +879,7 @@ async function renderModal(uid){
       <div class="kpi"><div class="l">定着率</div><div class="v">${S.retention==null?'—':S.retention+'<span class="u">%</span>'}</div></div>
       <div class="kpi"><div class="l">最終配信</div><div class="v" style="font-size:17px">${lastAgo==null?'—':(live?'配信中':lastAgo===0?'今日':lastAgo+'日前')}</div></div>
     </div>
-    <div class="cbox"><h3>日ごとの平均同時接続</h3><canvas id="dc"></canvas></div>
+    <div class="cbox"><h3>日ごとの平均同時接続</h3>${daily.length?'<canvas id="dc"></canvas>':'<div class="empty">日次データがありません（配信記録 '+bs.length+'件）</div>'}</div>
     ${live&&nz.length>1?'<div class="cbox" style="margin-top:14px"><h3>現在の配信（リアルタイム）</h3><canvas id="dcLive"></canvas></div>':''}
     <div class="sect" style="margin-top:24px">配信ごとの記録</div>
     ${bs.length?[...bs].reverse().slice(0,60).map((x,i,arr)=>{
@@ -888,9 +899,10 @@ async function renderModal(uid){
   if(dChart){dChart.destroy();dChart=null;}
   if(liveChart){liveChart.destroy();liveChart=null;}
 
-  if(daily.length){
+  const dcEl=document.getElementById('dc');
+  if(daily.length&&dcEl){
     const dv=daily.map(x=>x.val),win=winFor(daily.length),ma=movingAvg(dv,win),many=daily.length>45;
-    dChart=new Chart(document.getElementById('dc'),{type:'line',
+    dChart=new Chart(dcEl,{type:'line',
       data:{labels:daily.map(x=>x.day),datasets:[
         {label:`平均同接（${win}日移動平均）`,data:ma,...lineStyle('#ff3b5c'),
          borderWidth:3,pointRadius:many?0:4,pointHoverRadius:7}]},
@@ -1015,7 +1027,7 @@ function renderLookup(d){
       <div class="kpi"><div class="l">取得配信数</div><div class="v">${bs.length}<span class="u">本</span></div></div>
       <div class="kpi"><div class="l">最終配信</div><div class="v" style="font-size:17px">${lastAgo==null?'—':lastAgo===0?'今日':lastAgo+'日前'}</div></div>
     </div>
-    <div class="cbox"><h3>日ごとの平均同時接続</h3><canvas id="dc"></canvas></div>
+    <div class="cbox"><h3>日ごとの平均同時接続</h3>${daily.length?'<canvas id="dc"></canvas>':'<div class="empty">日次データがありません（配信記録 '+bs.length+'件）</div>'}</div>
     <div class="note" style="margin-top:10px">※このデータは追跡していないため保存されません。継続的に記録したい場合は「追跡に追加」を押してください。</div>
     <div class="sect" style="margin-top:24px">配信ごとの記録</div>
     ${bs.length?[...bs].reverse().slice(0,60).map((x,i,arr)=>{
@@ -1033,9 +1045,10 @@ function renderLookup(d){
       </div>`;}).join(''):'<div class="empty">配信記録が取得できませんでした</div>'}`;
 
   if(dChart){dChart.destroy();dChart=null;}
-  if(daily.length){
+  const dcEl=document.getElementById('dc');
+  if(daily.length&&dcEl){
     const dv=daily.map(x=>x.val),win=winFor(daily.length),ma=movingAvg(dv,win),many=daily.length>45;
-    dChart=new Chart(document.getElementById('dc'),{type:'line',
+    dChart=new Chart(dcEl,{type:'line',
       data:{labels:daily.map(x=>x.day),datasets:[
         {label:`平均同接（${win}日移動平均）`,data:ma,...lineStyle('#ff3b5c'),
          borderWidth:3,pointRadius:many?0:4,pointHoverRadius:7}]},
