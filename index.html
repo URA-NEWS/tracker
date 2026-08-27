@@ -863,6 +863,9 @@ async function renderModal(uid){
   }
   const nz=(d.current_samples||[]).filter(x=>x.concurrent>0);
   const live=!!S.live;
+  // HTMLを差し替える前に既存チャートを破棄する（キャンバスが消えると destroy が失敗するため）
+  try{ if(dChart){dChart.destroy();} }catch(e){} dChart=null;
+  try{ if(liveChart){liveChart.destroy();} }catch(e){} liveChart=null;
   const lastAgo=S.lastTs?Math.floor((Date.now()-S.lastTs)/864e5):null;
 
   document.getElementById('modal').innerHTML=`
@@ -906,11 +909,9 @@ async function renderModal(uid){
         <span class="s">平均 ${fmt(x.val)}人${x.avg==null?'<span style="color:var(--sub);font-weight:400;font-size:11px">(推定)</span>':''}${x.live?' <span style="color:var(--live);font-weight:400;font-size:11px">配信中</span>':''}</span>
       </div>`;}).join(''):'<div class="empty">まだ配信記録がありません</div>'}`;
 
-  if(dChart){dChart.destroy();dChart=null;}
-  if(liveChart){liveChart.destroy();liveChart=null;}
-
   const dcEl=document.getElementById('dc');
   if(daily.length&&dcEl){
+   try{
     const dv=daily.map(x=>x.val),win=winFor(daily.length),ma=movingAvg(dv,win),many=daily.length>45;
     dChart=new Chart(dcEl,{type:'line',
       data:{labels:daily.map(x=>x.day),datasets:[
@@ -930,11 +931,13 @@ async function renderModal(uid){
             const xx=new Date(dd+'T00:00:00+09:00');return`${xx.getMonth()+1}/${xx.getDate()}`;}}},
           y:AXIS.y}}});
     dChart.$pulse=live?[0]:[];
+   }catch(e){ console.error('daily chart:',e); }
   }
 
   if(live&&nz.length>1){
     const el=document.getElementById('dcLive');
     if(el){
+     try{
       liveChart=new Chart(el,{type:'line',
         data:{labels:nz.map(x=>new Date(x.timestamp).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'})),
           datasets:[{label:'同時接続',data:nz.map(x=>x.concurrent),...lineStyle('#ff3b5c'),pointRadius:0,pointHoverRadius:5}]},
@@ -945,6 +948,7 @@ async function renderModal(uid){
             label:it=>` ${it.dataset.label}  ${fmt(it.parsed.y)} 人`}}},
           scales:{x:{...AXIS.x,ticks:{...AXIS.x.ticks,maxTicksLimit:7}},y:AXIS.y}}});
       liveChart.$pulse=[0];
+     }catch(e){ console.error('live chart:',e); }
     }
   }
 }
@@ -999,6 +1003,8 @@ async function openLookup(uid){
 }
 
 function renderLookup(d){
+  try{ if(dChart){dChart.destroy();} }catch(e){} dChart=null;
+  try{ if(liveChart){liveChart.destroy();} }catch(e){} liveChart=null;
   const P=d.profile||{};
   const bs=(d.broadcasts||[]).map(x=>({
     t:new Date(x.started_at).getTime(),started_at:x.started_at,live:false,archive:true,
@@ -1054,9 +1060,9 @@ function renderLookup(d){
         <span class="s">平均 ${fmt(v)}人<span style="color:var(--sub);font-weight:400;font-size:11px">(推定)</span></span>
       </div>`;}).join(''):'<div class="empty">配信記録が取得できませんでした</div>'}`;
 
-  if(dChart){dChart.destroy();dChart=null;}
   const dcEl=document.getElementById('dc');
   if(daily.length&&dcEl){
+   try{
     const dv=daily.map(x=>x.val),win=winFor(daily.length),ma=movingAvg(dv,win),many=daily.length>45;
     dChart=new Chart(dcEl,{type:'line',
       data:{labels:daily.map(x=>x.day),datasets:[
@@ -1075,6 +1081,7 @@ function renderLookup(d){
             const dd=this.getLabelForValue(v);if(!dd)return'';
             const xx=new Date(dd+'T00:00:00+09:00');return`${xx.getMonth()+1}/${xx.getDate()}`;}}},
           y:AXIS.y}}});
+   }catch(e){ console.error('lookup chart:',e); }
   }
 }
 
