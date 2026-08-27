@@ -23,7 +23,8 @@ const KICK_SECRET = process.env.KICK_CLIENT_SECRET || '';
 const USE_KICK = !!(KICK_ID && KICK_SECRET);
 const KICK_LIMIT = 50;
 const SAMPLE_RETENTION_DAYS = 7;   // 生サンプルの保持日数
-const MONITOR_CONCURRENCY = 10;    // 監視の並列数
+const MONITOR_CONCURRENCY = 10;
+const MISS_TOLERANCE = 3;          // 連続でこの回数取れなければ配信終了とみなす    // 監視の並列数
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 let kickToken = null, kickTokenExp = 0;
 
@@ -573,9 +574,12 @@ async function backfillKick(b) {
     const startedMs = new Date(String(startedRaw).replace(' ', 'T') + (String(startedRaw).endsWith('Z') ? '' : 'Z')).getTime();
     if (!startedMs || isNaN(startedMs)) continue;
     const durMs = Number(v.duration || ls.duration || 0);
-    const peak = Number(ls.viewer_count ?? v.viewer_count ?? 0);
+    if (!durMs) continue;                       // 配信中のものが混ざるので除外
+    if (ls.is_live || v.is_live) continue;
+    // Kick の viewer_count は「終了時点の残り人数」で最高同接ではないため使わない
     const total = Number(v.views ?? v.view_count ?? ls.views ?? 0);
-    if (!peak && !total) continue;
+    if (!total) continue;
+    const peak = null;
 
     const id = `karc_${uid}_${v.id || ls.id}`;
     if (broadcasterStats[uid].history.some(h => h.broadcast_id === id)) continue;
@@ -585,15 +589,14 @@ async function backfillKick(b) {
       started_at: new Date(startedMs).toISOString(),
       ended_at: new Date(startedMs + durMs).toISOString(),
       source: 'archive', platform: 'kick',
-      peak, total_final: total, duration: Math.round(durMs / 1000),
+      peak: null, total_final: total, duration: Math.round(durMs / 1000),
       samples: []
     };
     broadcasterStats[uid].history.push(obj);
     rows.push({
       id, user_id: uid, started_at: obj.started_at, ended_at: obj.ended_at,
-      peak, total, duration: obj.duration, source: 'archive', platform: 'kick'
+      peak: null, total, duration: obj.duration, source: 'archive', platform: 'kick'
     });
-    if (peak > (b.best_peak || 0)) b.best_peak = peak;
   }
 
   if (rows.length && USE_SB) {
@@ -879,6 +882,7 @@ async function checkOne(bc, now) {
       catch (e) { console.error('persist start:', e.message); }
     } else {
       const b = broadcasterStats[uid].current_broadcast;
+      b.miss = 0;
       b.samples.push(s);
       try { await persistSample(uid, b.broadcast_id, s); } catch (e) { console.error('persist sample:', e.message); }
     }
@@ -890,6 +894,8 @@ async function checkOne(bc, now) {
     if (!USE_SB) saveJson(STATS_FILE, broadcasterStats);
   } else if (wasLive) {
     const b = broadcasterStats[uid].current_broadcast;
+    b.miss = (b.miss || 0) + 1;
+    if (b.miss < MISS_TOLERANCE) return;   // 一時的な取得失敗では終了扱いにしない
     b.ended_at = new Date().toISOString();
     const sm = (b.samples || []).filter(x => x.concurrent > 0);
     b.avg_concurrent = sm.length ? Math.round(sm.reduce((t, x) => t + x.concurrent, 0) / sm.length) : null;
@@ -901,6 +907,10 @@ async function checkOne(bc, now) {
     broadcasterStats[uid].current_broadcast = null;
     offlineCheckedAt[uid] = now;
     console.log(`[${uid}] 配信終了 avg=${b.avg_concurrent} peak=${b.peak} n=${sm.length}`);
+    if ((bc.platform || 'twitcasting') === 'kick') {
+      // Kick は配信中に総視聴数が取れないので、終了後にVODから補完
+      setTimeout(() => { backfillKick(bc).catch(() => {}); }, 5 * 60 * 1000);
+    }
     try { await persistBroadcastEnd(uid, b); } catch (e) { console.error('persist end:', e.message); }
     if (!USE_SB) saveJson(STATS_FILE, broadcasterStats);
   }
@@ -944,6 +954,7 @@ async function compactSamples() {
       return b;
     });
   }
+  try { await sb('POST', 'rpc/tw_refresh_ratio', { body: {} }); } catch (e) { console.error('[ratio]', e.message); }
   console.log('[compact] 完了');
   return { ok: true };
 }
