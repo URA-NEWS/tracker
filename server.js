@@ -225,18 +225,35 @@ function parseCountToken(tok) {
 // プロフィールHTMLから「ファン(Fans)」数を取る。/{user}/backers/ リンクの近傍を見る
 function parseFansFromHtml(html, userId) {
   if (!html) return null;
-  const re = new RegExp(`/${userId.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}/backers`, 'i');
+  const esc = userId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`/${esc}/backers`, 'i');
   const idx = html.search(re);
   if (idx === -1) return null;
-  const win = html.slice(idx, idx + 1500)
+
+  // idx は <a href="/xxx/backers/"> のタグ内部を指すので、
+  // タグを閉じる '>' の直後から読み始める（ユーザーID内の数字を拾わないため）
+  let start = html.indexOf('>', idx);
+  start = (start === -1) ? idx : start + 1;
+
+  const win = html.slice(start, start + 1500)
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/g, ' ')
-    .replace(/\s+/g, ' ');
-  // 「ファン」「Fans」の直後、もしくは最初に現れる数値トークン
-  let m = win.match(/(?:ファン|Fans?)\s*([\d.,]+\s*[kKmM万億]?)/i)
-       || win.match(/([\d.,]+\s*[kKmM万億]?)/);
-  return m ? parseCountToken(m[1]) : null;
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // 「ファン」「Fans」ラベルの直後の数値を最優先
+  let m = win.match(/(?:ファン|Fans?)\s*[:：]?\s*([\d.,]+\s*[kKmM万億]?)/i);
+  if (!m) {
+    // ラベルが無い場合のみ、先頭付近の数値トークンを使う（120文字以内に限定）
+    const head = win.slice(0, 120);
+    m = head.match(/(?<![\w\/])([\d.,]+\s*[kKmM万億]?)(?![\w])/);
+  }
+  if (!m) return null;
+  const n = parseCountToken(m[1]);
+  // 明らかに異常な値は捨てる
+  if (n == null || n <= 0 || n > 50000000) return null;
+  return n;
 }
 
 // ---------- ツイキャス: 名前・アイコン ----------
@@ -1460,6 +1477,29 @@ const server = http.createServer((req, res) => {
       } catch (e) { out.error = e.message; }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(out, null, 2));
+    })();
+    return;
+  }
+
+  // フォロワーをリセットして再取得: POST /api/reset-followers
+  if (pathname === '/api/reset-followers' && req.method === 'POST') {
+    (async () => {
+      for (const b of config.broadcasters) {
+        if ((b.platform || 'twitcasting') !== 'twitcasting') continue;
+        b.follower_count = null; b.follower_updated_at = null;
+      }
+      if (USE_SB) {
+        try {
+          await sb('PATCH', 'tw_broadcasters', {
+            query: '?platform=eq.twitcasting',
+            body: { follower_count: null, follower_updated_at: null }
+          });
+        } catch (e) { console.error('reset followers:', e.message); }
+      } else saveJson(CONFIG_FILE, config);
+      await refreshAllUserInfo();
+      const after = config.broadcasters.filter(b => b.follower_count).length;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ reset: true, after, total: config.broadcasters.length }));
     })();
     return;
   }
