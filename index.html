@@ -376,7 +376,11 @@ function renderOverall(){
   if(range>0)rows=rows.slice(-range);
 
   const peaks=rows.map(r=>r.overall_peak_avg==null?null:Number(r.overall_peak_avg));
-  const avgs=rows.map(r=>r.overall_avg==null?null:Number(r.overall_avg));
+  const avgs=rows.map(r=>{
+    if(r.overall_avg==null)return null;
+    const cov=Number(r.broadcasts||0)?Number(r.measured_broadcasts||0)/Number(r.broadcasts):0;
+    return cov>=0.35?Number(r.overall_avg):null;   // 測定カバー率35%未満の日は信頼できないので除外
+  });
   const tots=rows.map(r=>Number(r.overall_total_viewers||0));
   const hasReal=avgs.some(v=>v!=null);
   document.getElementById('heroVal').textContent=fmt(peaks.length?peaks[peaks.length-1]:null);
@@ -426,7 +430,7 @@ function renderOverall(){
             const out=[
               ` 最高同接の平均（日） ${fmt(r.overall_peak_avg)}`,
               ` 最高同接の平均（${win}日） ${fmt(peakMA[i])}`];
-            if(r.overall_avg!=null) out.push(` 実測の平均同接      ${fmt(r.overall_avg)}（${r.measured_broadcasts}配信）`);
+            if(r.overall_avg!=null) out.push(` 実測の平均同接      ${fmt(r.overall_avg)}（${r.measured_broadcasts}/${r.broadcasts}配信を計測）`);
             if(platform!=='kick') out.push(` 総来場者            ${fmt(r.overall_total_viewers)}`);
             out.push(
               ` 配信数 / 配信者数   ${fmt(r.broadcasts)} / ${fmt(r.broadcasters)}`,
