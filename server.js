@@ -332,7 +332,7 @@ async function refreshOne(b) {
     try {
       let changed = false;
       if ((b.platform || 'twitcasting') === 'whowatch') {
-        const w = await fetchWWUser(wwPath(b.user_id));
+        const w = await fetchWWUser(wwPath(b.user_id), b.ww_user_id);
         if (w) {
           if (w.name && w.name !== b.name) { b.name = w.name; changed = true; }
           if (w.image && w.image !== b.image) { b.image = w.image; changed = true; }
@@ -620,6 +620,7 @@ async function fetchWWLiveList() {
         if (!l || !l.user || !l.user.user_path) return;
         out.push({
           user_id: WW_PREFIX + l.user.user_path,
+          user_num: l.user.id ?? null,
           live_id: l.id,
           name: l.user.name || l.user.user_path,
           image: l.user.icon_url || null,
@@ -659,26 +660,80 @@ async function getWWLive() {
 }
 
 // プロフィール（フォロワー数など）
-async function fetchWWUser(userPath) {
-  const tries = [
-    `https://api.whowatch.tv/profiles/${encodeURIComponent(userPath)}`,
-    `https://api.whowatch.tv/users/${encodeURIComponent(userPath)}`
-  ];
+function parseWWCount(txt) {
+  if (!txt) return null;
+  const m = String(txt).replace(/,/g, '').match(/([\d.]+)\s*([kKmM万億]?)/);
+  if (!m) return null;
+  let n = parseFloat(m[1]); if (isNaN(n)) return null;
+  const suf = m[2];
+  if (suf === 'k' || suf === 'K') n *= 1000;
+  else if (suf === 'm' || suf === 'M') n *= 1e6;
+  else if (suf === '万') n *= 1e4;
+  else if (suf === '億') n *= 1e8;
+  return Math.round(n);
+}
+
+async function fetchWWUser(userPath, numId) {
+  // 1) API候補
+  const tries = [];
+  if (numId) {
+    tries.push(`https://api.whowatch.tv/users/${numId}`);
+    tries.push(`https://api.whowatch.tv/users/${numId}/profile`);
+    tries.push(`https://api.whowatch.tv/profiles/${numId}`);
+  }
+  tries.push(`https://api.whowatch.tv/users/${encodeURIComponent(userPath)}`);
+  tries.push(`https://api.whowatch.tv/profiles/${encodeURIComponent(userPath)}`);
+
   for (const u of tries) {
     try {
       const r = await fetch(u, { headers: WW_HDRS });
       if (!r.ok) continue;
       const j = await r.json();
       const usr = j.user || j.profile || j;
-      if (!usr) continue;
+      if (!usr || (!usr.name && !usr.id)) continue;
+      const fol = Number(
+        usr.follower_count ?? usr.followers_count ?? usr.fan_count ??
+        j.follower_count ?? j.followers_count ?? 0) || null;
       return {
         name: usr.name || userPath,
         image: usr.icon_url || usr.profile_icon_url || null,
-        followers: Number(usr.follower_count ?? usr.followers_count ?? j.follower_count ?? 0) || null,
-        user_id_num: usr.id ?? null
+        followers: fol,
+        user_id_num: usr.id ?? numId ?? null,
+        source: u
       };
     } catch (e) { /* next */ }
   }
+
+  // 2) プロフィールページのHTMLから拾う
+  try {
+    const r = await fetch(`https://whowatch.tv/profile/${encodeURIComponent(userPath)}`, {
+      headers: { 'User-Agent': UA, 'Accept-Language': 'ja' }
+    });
+    if (r.ok) {
+      const html = await r.text();
+      let fol = null, name = null, image = null, idNum = numId || null;
+
+      let m = html.match(/"follower_count"\s*:\s*"?([\d,]+)"?/)
+           || html.match(/"followerCount"\s*:\s*"?([\d,]+)"?/);
+      if (m) fol = parseWWCount(m[1]);
+      if (!fol) {
+        const t = html.replace(/<script[\s\S]*?<\/script>/gi, ' ')
+                      .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+        const mm = t.match(/フォロワー[^0-9]{0,20}([\d,]+\s*[万億]?)/);
+        if (mm) fol = parseWWCount(mm[1]);
+      }
+      m = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i);
+      if (m) name = m[1].replace(/\s*[-|｜].*$/, '').trim();
+      m = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
+      if (m) image = m[1];
+      m = html.match(/"user"\s*:\s*\{\s*"id"\s*:\s*(\d+)/);
+      if (m) idNum = Number(m[1]);
+
+      if (name || fol) {
+        return { name: name || userPath, image, followers: fol, user_id_num: idNum, source: 'html' };
+      }
+    }
+  } catch (e) { /* give up */ }
   return null;
 }
 
@@ -687,7 +742,7 @@ async function fetchWWArchives(b) {
   const path = wwPath(b.user_id);
   let numId = b.ww_user_id || null;
   if (!numId) {
-    const info = await fetchWWUser(path);
+    const info = await fetchWWUser(path, null);
     if (info && info.user_id_num) numId = info.user_id_num;
   }
   const tries = [];
@@ -695,8 +750,12 @@ async function fetchWWArchives(b) {
     tries.push(`https://api.whowatch.tv/users/${numId}/lives`);
     tries.push(`https://api.whowatch.tv/users/${numId}/archives`);
     tries.push(`https://api.whowatch.tv/users/${numId}/past_lives`);
+    tries.push(`https://api.whowatch.tv/users/${numId}/live_histories`);
+    tries.push(`https://api.whowatch.tv/users/${numId}/movies`);
+    tries.push(`https://api.whowatch.tv/users/${numId}/replays`);
   }
   tries.push(`https://api.whowatch.tv/profiles/${encodeURIComponent(path)}/lives`);
+  tries.push(`https://api.whowatch.tv/users/${encodeURIComponent(path)}/lives`);
 
   for (const u of tries) {
     try {
@@ -794,6 +853,7 @@ async function discoverWW() {
     if (ex) {
       let changed = false;
       if (c.viewers > (ex.best_peak || 0)) { ex.best_peak = c.viewers; changed = true; }
+      if (!ex.ww_user_id && c.user_num) { ex.ww_user_id = c.user_num; changed = true; }
       ex.last_live_at = now;
       if (ex.dormant && ex.auto) {
         const autos = activeAutos();
@@ -814,7 +874,8 @@ async function discoverWW() {
     const b = {
       user_id: c.user_id, name: c.name, image: c.image,
       pinned: false, auto: true, dormant: false,
-      best_peak: c.viewers, last_live_at: now, platform: 'whowatch'
+      best_peak: c.viewers, last_live_at: now, platform: 'whowatch',
+      ww_user_id: c.user_num || null
     };
     config.broadcasters.push(b);
     byId.set(b.user_id, b);
@@ -1745,13 +1806,57 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // ふわっちAPI総当たり診断: GET /api/probe-ww/<user_path>
+  if (pathname.startsWith('/api/probe-ww/') && req.method === 'GET') {
+    (async () => {
+      const path = decodeURIComponent(pathname.replace('/api/probe-ww/', ''));
+      const live = await getWWLive();
+      const hit = (live || []).find(x => x.user_id === WW_PREFIX + path);
+      const numId = hit ? hit.user_num : null;
+      const out = { user_path: path, num_id: numId, from_live_list: !!hit, results: [] };
+      const urls = [];
+      if (numId) {
+        ['', '/profile', '/lives', '/archives', '/past_lives', '/live_histories', '/movies', '/replays', '/followers']
+          .forEach(sfx => urls.push(`https://api.whowatch.tv/users/${numId}${sfx}`));
+      }
+      urls.push(`https://api.whowatch.tv/users/${encodeURIComponent(path)}`);
+      urls.push(`https://api.whowatch.tv/profiles/${encodeURIComponent(path)}`);
+      if (hit && hit.live_id) urls.push(`https://api.whowatch.tv/lives/${hit.live_id}`);
+
+      for (const u of urls) {
+        const rec = { url: u };
+        try {
+          const r = await fetch(u, { headers: WW_HDRS });
+          rec.status = r.status;
+          const t = await r.text();
+          rec.len = t.length;
+          if (r.ok) {
+            try {
+              const j = JSON.parse(t);
+              rec.keys = Array.isArray(j) ? `array(${j.length})` : Object.keys(j).slice(0, 25);
+              const flat = JSON.stringify(j);
+              const fm = flat.match(/"follower[_A-Za-z]*"\s*:\s*"?(\d+)"?/);
+              if (fm) rec.follower_hint = fm[1];
+            } catch (e) { rec.head = t.slice(0, 150); }
+          }
+        } catch (e) { rec.error = e.message; }
+        out.results.push(rec);
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(out, null, 2));
+    })();
+    return;
+  }
+
   // ふわっちの過去配信APIを診断: GET /api/debug-ww/<user_path>
   if (pathname.startsWith('/api/debug-ww/') && req.method === 'GET') {
     (async () => {
       const path = decodeURIComponent(pathname.replace('/api/debug-ww/', ''));
       const out = { user_path: path };
-      out.profile = await fetchWWUser(path);
-      const b = { user_id: WW_PREFIX + path, ww_user_id: out.profile && out.profile.user_id_num };
+      const live0 = await getWWLive();
+      const hit0 = (live0 || []).find(x => x.user_id === WW_PREFIX + path);
+      out.profile = await fetchWWUser(path, hit0 ? hit0.user_num : null);
+      const b = { user_id: WW_PREFIX + path, ww_user_id: (out.profile && out.profile.user_id_num) || (hit0 && hit0.user_num) };
       const r = await fetchWWArchives(b);
       out.archive_ok = r.ok;
       out.archive_endpoint = r.endpoint || null;
@@ -1883,7 +1988,7 @@ const server = http.createServer((req, res) => {
       try {
         if (plat === 'whowatch') {
           let path = word.match(/whowatch\.tv\/profile\/([^/?#]+)/i)?.[1] || word.replace(/^ww:/i, '');
-          const w = await fetchWWUser(path);
+          const w = await fetchWWUser(path, null);
           if (w) out.push({ user_id: WW_PREFIX + path, name: w.name, image: w.image, platform: 'whowatch', followers: w.followers });
           const live = await getWWLive();
           const q = word.toLowerCase();
@@ -1956,7 +2061,7 @@ const server = http.createServer((req, res) => {
         let profile = null, broadcasts = [];
 
         if (plat === 'whowatch') {
-          const w = await fetchWWUser(wwPath(uid));
+          const w = await fetchWWUser(wwPath(uid), (config.broadcasters.find(x=>x.user_id===uid)||{}).ww_user_id);
           const live = await getWWLive();
           const hit = (live || []).find(x => x.user_id === uid);
           profile = w ? { name: w.name, image: w.image, followers: w.followers, live: !!hit, current: hit ? hit.viewers : null } : null;
@@ -2269,7 +2374,7 @@ const server = http.createServer((req, res) => {
         let info, plat = 'twitcasting';
         if (isWW(uid)) {
           plat = 'whowatch';
-          const w = await fetchWWUser(wwPath(uid));
+          const w = await fetchWWUser(wwPath(uid), (config.broadcasters.find(x=>x.user_id===uid)||{}).ww_user_id);
           info = w ? { name: w.name, image: w.image, followers: w.followers } : null;
         } else if (isKick(uid)) {
           plat = 'kick';
