@@ -184,7 +184,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
   <div class="hero">
     <div class="heroTop">
       <div>
-        <div class="bigl" id="heroLabel">全体 最高同接の平均（最新日）</div>
+        <div class="bigl" id="heroLabel">全体 平均同接（最新日）</div>
         <div class="bigv" id="heroVal">—</div>
       </div>
       <div id="heroTotalBox">
@@ -208,7 +208,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
   <div class="stats3" id="stats3"></div>
 
   <div class="sect">個別の配信者
-    <span class="sub">数値は最高同接ベース／クリックで詳細</span>
+    <span class="sub">数値は平均同接／クリックで詳細</span>
     <span class="sp"></span>
     <div class="seg" id="listSort">
       <button data-k="pct" class="on">上昇率順</button>
@@ -242,7 +242,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
     <div class="hero">
       <div class="bigl">ツイキャス vs Kick（日本）</div>
       <canvas id="cmpChart" style="height:440px!important;margin-top:14px"></canvas>
-      <div class="note">両プラットフォームの「最高同接の平均」を同一軸で比較します。Kickは監視開始以降のデータのみ。</div>
+      <div class="note">両プラットフォームの「平均同接」を同一軸で比較します。Kickは監視開始以降のデータのみ。</div>
     </div>
     <div class="stats3" id="cmpStats"></div>
   </div>
@@ -373,18 +373,29 @@ function broadcastsOf(st){if(!st)return[];
     if(sm.length)return{t:new Date(b.started_at).getTime(),started_at:b.started_at,live:!!b._live,archive:false,
       avg:Math.round(sm.reduce((a,x)=>a+x.concurrent,0)/sm.length),
       peak:Math.max(...sm.map(x=>x.concurrent)),total:sm[sm.length-1].total};
-    if(b.source==='archive'&&(b.peak||b.total_final))return{t:new Date(b.started_at).getTime(),
-      started_at:b.started_at,live:false,archive:true,avg:null,peak:b.peak||0,total:b.total_final||0};
+    if(b.source==='archive'&&(b.peak!=null||b.total_final))return{t:new Date(b.started_at).getTime(),
+      started_at:b.started_at,live:false,archive:true,avg:null,peak:b.peak??null,total:b.total_final||0};
     return null;}).filter(Boolean).sort((a,b)=>a.t-b.t);}
-const valOf=x=>x.peak;              // 全期間で一貫して比較できるのは最高同接
-const realAvgOf=x=>x.avg;           // 実測の平均同接（監視開始以降のみ）
+const RATIO={twitcasting:0.879,kick:0.860};
+// 平均同接: 実測があれば実測、無ければ最高同接から推定
+function valOf(x){
+  if(x.avg!=null)return x.avg;
+  if(x.peak!=null)return Math.round(x.peak*(RATIO[platform]||0.88));
+  return null;
+}
+const peakOf=x=>x.peak;
 
 // 個別: 日別平均
 function dailyOf(bs){
   const m={};
-  bs.forEach(x=>{const k=new Date(x.t+9*3600e3).toISOString().slice(0,10);
-    (m[k]=m[k]||[]).push(valOf(x));});
-  return Object.keys(m).sort().map(k=>({day:k,val:mean(m[k]),n:m[k].length}));
+  bs.forEach(x=>{
+    const v=valOf(x); if(v==null)return;
+    const k=new Date(x.t+9*3600e3).toISOString().slice(0,10);
+    (m[k]=m[k]||{v:[],p:[],n:0});
+    m[k].v.push(v); if(x.peak!=null)m[k].p.push(x.peak); m[k].n++;
+  });
+  return Object.keys(m).sort().map(k=>({day:k,val:mean(m[k].v),
+    peak:m[k].p.length?Math.max(...m[k].p):null,n:m[k].n}));
 }
 // 日数ベース: 直近N日の平均 vs その前N日の平均
 function trendDays(bs,days){
@@ -452,8 +463,8 @@ async function loadCompare(){
     const mk=(arr,key)=>{const m={};arr.forEach(r=>m[r.day]=r[key]==null?null:Number(r[key]));
       return days.map(d=>m[d]??null);};
     const win=winFor(days.length);
-    const tw=movingAvg(mk(byP.twitcasting,'overall_peak_avg'),win);
-    const kk=movingAvg(mk(byP.kick,'overall_peak_avg'),win);
+    const tw=movingAvg(mk(byP.twitcasting,'overall_avg'),win);
+    const kk=movingAvg(mk(byP.kick,'overall_avg'),win);
     if(cmpChart)cmpChart.destroy();
     cmpChart=new Chart(document.getElementById('cmpChart'),{type:'line',
       data:{labels:days,datasets:[
@@ -476,11 +487,11 @@ async function loadCompare(){
     const last=p=>{const a=byP[p];return a.length?a[a.length-1]:null;};
     const t=last('twitcasting'),k=last('kick');
     document.getElementById('cmpStats').innerHTML=`
-      <div class="st"><div class="l">ツイキャス 最新日の平均</div><div class="v" style="color:#8fb0ff">${fmt(t&&t.overall_peak_avg)}</div></div>
-      <div class="st"><div class="l">Kick 最新日の平均</div><div class="v" style="color:#7fe6c4">${fmt(k&&k.overall_peak_avg)}</div></div>
+      <div class="st"><div class="l">ツイキャス 平均同接</div><div class="v" style="color:#8fb0ff">${fmt(t&&t.overall_avg)}</div></div>
+      <div class="st"><div class="l">Kick 平均同接</div><div class="v" style="color:#7fe6c4">${fmt(k&&k.overall_avg)}</div></div>
       <div class="st"><div class="l">ツイキャス 配信者数</div><div class="v">${fmt(t&&t.broadcasters)}</div></div>
       <div class="st"><div class="l">Kick 配信者数</div><div class="v">${fmt(k&&k.broadcasters)}</div></div>
-      <div class="st"><div class="l">同接比（Kick/ツイキャス）</div><div class="v">${(t&&k&&t.overall_peak_avg)?Math.round(k.overall_peak_avg/t.overall_peak_avg*100)+'%':'—'}</div></div>`;
+      <div class="st"><div class="l">同接比（Kick/ツイキャス）</div><div class="v">${(t&&k&&t.overall_avg)?Math.round(k.overall_avg/t.overall_avg*100)+'%':'—'}</div></div>`;
   }catch(e){showErr('比較データ取得エラー: '+e.message);}
 }
 
@@ -511,12 +522,12 @@ async function loadDuration(){
   try{
     const rows=await fetch(API+'/duration?platform='+platform).then(r=>r.json());
     if(!rows.length){document.getElementById('durList').innerHTML='<div class="empty">まだデータがありません</div>';return;}
-    const max=Math.max(...rows.map(r=>Number(r.avg_peak||0)));
+    const max=Math.max(...rows.map(r=>Number(r.avg_conc||0)));
     document.getElementById('durList').innerHTML=rows.map(r=>`
       <div class="dur">
         <div style="font-weight:700">${esc(r.bucket)}</div>
-        <div class="bar"><i style="width:${max?Math.round(Number(r.avg_peak)/max*100):0}%"></i></div>
-        <div class="n">${fmt(r.avg_peak)}<small>平均最高同接</small></div>
+        <div class="bar"><i style="width:${max?Math.round(Number(r.avg_conc)/max*100):0}%"></i></div>
+        <div class="n">${fmt(r.avg_conc)}<small>平均同接</small></div>
         <div class="n">${fmt(r.broadcasts)}<small>配信数</small></div>
       </div>`).join('');
   }catch(e){showErr('配信時間分析エラー: '+e.message);}
@@ -563,50 +574,43 @@ function renderOverall(){
   let rows=[...overall];
   if(range>0)rows=rows.slice(-range);
 
+  // 主役は「平均同接」（実測があれば実測、無ければ最高同接から推定）
+  const avgs=rows.map(r=>r.overall_avg==null?null:Number(r.overall_avg));
   const peaks=rows.map(r=>r.overall_peak_avg==null?null:Number(r.overall_peak_avg));
-  const avgs=rows.map(r=>{
-    if(r.overall_avg==null)return null;
-    const cov=Number(r.broadcasts||0)?Number(r.measured_broadcasts||0)/Number(r.broadcasts):0;
-    return cov>=0.35?Number(r.overall_avg):null;   // 測定カバー率35%未満の日は信頼できないので除外
-  });
   const tots=rows.map(r=>Number(r.overall_total_viewers||0));
-  const hasReal=avgs.some(v=>v!=null);
-  document.getElementById('heroVal').textContent=fmt(peaks.length?peaks[peaks.length-1]:null);
-  document.getElementById('heroLabel').textContent=platform==='kick'?'全体 平均同接（最新日）':'全体 最高同接の平均（最新日）';
+  document.getElementById('heroVal').textContent=fmt(avgs.length?avgs[avgs.length-1]:null);
+  document.getElementById('heroLabel').textContent='全体 平均同接（最新日）';
   document.getElementById('heroTotalBox').style.display='';
   document.getElementById('heroVal2').textContent=fmt(tots.length?tots[tots.length-1]:null);
 
   const cmp=(days,label)=>{
-    const all=overall.map(r=>Number(r.overall_peak_avg||0));
+    const all=overall.map(r=>Number(r.overall_avg||0));
     if(all.length<2)return`<div class="dl"><div class="l">${label}</div><div class="v flat">—</div></div>`;
     const recent=mean(all.slice(-days)),prev=mean(all.slice(-days*2,-days));
     if(prev==null||!prev)return`<div class="dl"><div class="l">${label}</div><div class="v flat">—</div></div>`;
     const p=Math.round((recent-prev)/prev*100);
     const cls=p>0?'up':p<0?'down':'flat';
-    return`<div class="dl"><div class="l">最高同接平均 ${label}</div>
+    return`<div class="dl"><div class="l">平均同接 ${label}</div>
       <div class="v ${cls}">${p>0?'▲ +':p<0?'▼ ':'± '}${Math.abs(p)}%</div></div>`;
   };
   document.getElementById('deltas').innerHTML=cmp(1,'前日')+cmp(7,'先週')+cmp(30,'先月');
 
   document.getElementById('note').textContent=rows.length
-    ? `${rows[0].day} 〜 ${rows[rows.length-1].day}／${rows.length}日分・のべ${rows.reduce((t,r)=>t+Number(r.broadcasts||0),0).toLocaleString('ja-JP')}配信を集計　　※長期の推移は全期間で取得できる「最高同接の平均」で比較しています。実測の平均同接（オレンジ点線）は本ツールで監視した配信のみで、計測率35%未満の日は非表示です。`
+    ? `${rows[0].day} 〜 ${rows[rows.length-1].day}／${rows.length}日分・のべ${rows.reduce((t,r)=>t+Number(r.broadcasts||0),0).toLocaleString('ja-JP')}配信を集計　　※平均同接は、本ツールが実測した配信はその実測値、過去配信は実測データから求めた比率（平均÷最高＝約0.88）で最高同接から推定した値です。`
     : 'まだ集計できるデータがありません。「過去取込」を押すと一気に貯まります。';
 
   const win=winFor(rows.length);
-  const peakMA=movingAvg(peaks,win), avgMA=movingAvg(avgs,win), totMA=movingAvg(tots,win);
+  const avgMA=movingAvg(avgs,win), totMA=movingAvg(tots,win);
   const many=rows.length>45;
 
   if(oChart)oChart.destroy();
   oChart=new Chart(document.getElementById('overall'),{type:'line',
     data:{labels:rows.map(r=>r.day),datasets:[
-      {label:`最高同接の平均（${win}日移動平均）`,data:peakMA,...lineStyle('#5b8cff'),
+      {label:`平均同接（${win}日移動平均）`,data:avgMA,...lineStyle('#5b8cff'),
        borderWidth:3,pointRadius:many?0:4,pointHoverRadius:7,yAxisID:'y',order:1},
-      ...([{label:`総来場者（${win}日移動平均）`,data:totMA,...lineStyle('#2ee6a8'),
-        backgroundColor:gradFill('#2ee6a8',false),
-        borderWidth:2.6,pointRadius:many?0:4,pointHoverRadius:7,yAxisID:'y1',order:2}]),
-      ...(hasReal?[{label:'実測の平均同接（日次）',data:avgs,
-        ...lineStyle('#ffb340',{fill:false}),borderWidth:2.4,borderDash:[5,4],
-        pointRadius:many?0:4,pointHoverRadius:7,spanGaps:false,yAxisID:'y',order:3}]:[]),
+      {label:`総来場者（${win}日移動平均）`,data:totMA,...lineStyle('#2ee6a8'),
+       backgroundColor:gradFill('#2ee6a8',false),
+       borderWidth:2.6,pointRadius:many?0:4,pointHoverRadius:7,yAxisID:'y1',order:2}
     ]},
     options:{responsive:true,maintainAspectRatio:false,...NOANIM,
       layout:{padding:{top:8,right:12,left:2,bottom:2}},
@@ -616,13 +620,15 @@ function renderOverall(){
           title:it=>dayJp(rows[it[0].dataIndex].day),
           label:it=>{if(it.datasetIndex)return null;const i=it.dataIndex,r=rows[i];
             const out=[
-              ` 最高同接の平均（日） ${fmt(r.overall_peak_avg)}`,
-              ` 最高同接の平均（${win}日） ${fmt(peakMA[i])}`];
-            if(r.overall_avg!=null) out.push(` 実測の平均同接      ${fmt(r.overall_avg)}（${r.measured_broadcasts}/${r.broadcasts}配信を計測）`);
-            out.push(` 総来場者            ${fmt(r.overall_total_viewers)}`);
+              ` 平均同接（日）    ${fmt(r.overall_avg)}`,
+              ` 平均同接（${win}日）  ${fmt(avgMA[i])}`];
+            if(r.overall_avg_measured!=null)
+              out.push(` └ 実測分のみ      ${fmt(r.overall_avg_measured)}（${fmt(r.measured_broadcasts)}/${fmt(r.broadcasts)}配信）`);
             out.push(
-              ` 配信数 / 配信者数   ${fmt(r.broadcasts)} / ${fmt(r.broadcasters)}`,
-              ` その日の最高        ${fmt(r.day_max_peak)}`);
+              ` 最高同接の平均    ${fmt(r.overall_peak_avg)}`,
+              ` 総来場者          ${fmt(r.overall_total_viewers)}`,
+              ` 配信数 / 配信者数 ${fmt(r.broadcasts)} / ${fmt(r.broadcasters)}`,
+              ` その日の最高      ${fmt(r.day_max_peak)}`);
             return out;}}}},
       scales:{
         x:{...AXIS.x,ticks:{...AXIS.x.ticks,callback:function(v){
@@ -641,13 +647,15 @@ function renderStats(){
   const liveNow=bcList().filter(b=>isLive(stats[b.user_id]));
   const curSum=liveNow.reduce((t,b)=>t+((latest(stats[b.user_id])||{}).concurrent||0),0);
   const curAvg=liveNow.length?Math.round(curSum/liveNow.length):null;
-  const allDays=overall.map(r=>Number(r.overall_peak_avg||0)).filter(v=>v>0);
+  const allDays=overall.map(r=>Number(r.overall_avg||0)).filter(v=>v>0);
   document.getElementById('stats3').innerHTML=`
     <div class="st"><div class="l">いま配信中の平均同接</div><div class="v" style="color:var(--live)">${fmt(curAvg)}</div></div>
     <div class="st"><div class="l">いま配信中の合計同接</div><div class="v">${fmt(curSum)}</div></div>
     <div class="st"><div class="l">最新日の配信者数</div><div class="v">${fmt(last&&last.broadcasters)}</div></div>
     <div class="st"><div class="l">最新日の総来場者</div><div class="v">${fmt(last&&last.overall_total_viewers)}</div></div>
-    <div class="st"><div class="l">全期間の最高同接平均</div><div class="v">${fmt(mean(allDays))}</div></div>
+    <div class="st"><div class="l">最新日の最高同接平均</div><div class="v">${fmt(last&&last.overall_peak_avg)}</div></div>
+    <div class="st"><div class="l">最新日のトップ同接</div><div class="v">${fmt(last&&last.day_max_peak)}</div></div>
+    <div class="st"><div class="l">全期間の平均同接</div><div class="v">${fmt(mean(allDays))}</div></div>
     <div class="st"><div class="l">集計日数</div><div class="v">${overall.length}</div></div>`;
 }
 
@@ -678,9 +686,9 @@ function renderTable(){
   });
 
   const hd=`<div class="thd"><span></span><span></span><span>配信者</span>
-    <span style="text-align:right">直近平均<br><span style="font-weight:400">最高同接</span></span>
+    <span style="text-align:right">直近平均<br><span style="font-weight:400">同時接続</span></span>
     <span style="text-align:right" class="hidesm">比較元</span>
-    <span style="text-align:right" class="hidesm">通算平均<br><span style="font-weight:400">最高同接</span></span>
+    <span style="text-align:right" class="hidesm">通算平均<br><span style="font-weight:400">同時接続</span></span>
     <span style="text-align:right">増減</span><span></span></div>`;
 
   const body=rows.length?rows.map((r,i)=>{
@@ -718,7 +726,8 @@ function renderModal(uid){
   const b=config.broadcasters.find(x=>x.user_id===uid);if(!b)return closeModal();
   const st=stats[uid],live=isLive(st),bs=broadcastsOf(st),tr=trendBy(bs),l=latest(st);
   const daily=dailyOf(bs);
-  const peak=bs.length?Math.max(...bs.map(x=>x.peak)):null;
+  const pk=bs.map(x=>x.peak).filter(v=>v!=null);
+  const peak=pk.length?Math.max(...pk):null;
 
   document.getElementById('modal').innerHTML=`
     <div class="mh">
@@ -734,13 +743,13 @@ function renderModal(uid){
     </div>
     <div class="kpis">
       <div class="kpi"><div class="l">現在の同接</div><div class="v">${live?fmt(l&&l.concurrent):'—'}</div></div>
-      <div class="kpi"><div class="l">直近の最高同接平均</div><div class="v">${fmt(tr?tr.recent:(bs.length?valOf(bs[bs.length-1]):null))}</div></div>
-      <div class="kpi"><div class="l">通算の最高同接平均</div><div class="v">${fmt(bs.length?mean(bs.map(valOf)):null)}</div></div>
+      <div class="kpi"><div class="l">直近の平均同接</div><div class="v">${fmt(tr?tr.recent:(bs.length?valOf(bs[bs.length-1]):null))}</div></div>
+      <div class="kpi"><div class="l">通算の平均同接</div><div class="v">${fmt(bs.length?mean(bs.map(valOf)):null)}</div></div>
       <div class="kpi"><div class="l">最高同接</div><div class="v">${fmt(peak)}</div></div>
       <div class="kpi"><div class="l">トレンド</div><div class="v ${tr?(tr.pct>0?'up':tr.pct<0?'down':'flat'):'flat'}">${tr?(tr.pct>0?'+':'')+tr.pct+'%':'—'}</div></div>
       <div class="kpi"><div class="l">記録配信数</div><div class="v">${bs.filter(x=>!x.live).length}</div></div>
     </div>
-    <div class="cbox"><h3>日ごとの最高同接<span style="color:var(--sub);font-weight:400;font-size:11px">（過去配信は最高同接しか取得できないため）</span></h3><canvas id="dc"></canvas></div>
+    <div class="cbox"><h3>日ごとの平均同時接続</h3><canvas id="dc"></canvas></div>
     <div class="sect" style="margin-top:24px">配信ごとの記録</div>
     ${bs.length?[...bs].reverse().slice(0,60).map((x,i,arr)=>{
       const prev=arr[i+1],v=valOf(x);
@@ -749,7 +758,7 @@ function renderModal(uid){
         t=d>0?`<span class="trend up">▲ ${p}%</span>`:d<0?`<span class="trend down">▼ ${Math.abs(p)}%</span>`:'<span class="trend flat">±0</span>';}
       return`<div class="hrow">
         <span class="d">${new Date(x.started_at).toLocaleString('ja-JP',{year:'2-digit',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</span>
-        ${t}<span class="s">${x.avg!=null?`平均 ${fmt(x.avg)}`:`最高 ${fmt(x.peak)}`} ／ 総 ${fmt(x.total)}${x.archive?' <span style="color:var(--sub);font-weight:400">(過去)</span>':x.live?' <span style="color:var(--live);font-weight:400">(配信中)</span>':''}</span>
+        ${t}<span class="s">平均 ${fmt(valOf(x))}${x.avg==null&&x.peak!=null?'<span style="color:var(--sub);font-weight:400;font-size:11px">(推定)</span>':''}${x.peak!=null?` ／ 最高 ${fmt(x.peak)}`:''} ／ 総 ${fmt(x.total)}${x.archive?' <span style="color:var(--sub);font-weight:400">(過去)</span>':x.live?' <span style="color:var(--live);font-weight:400">(配信中)</span>':''}</span>
       </div>`;}).join(''):'<div class="empty">まだ配信記録がありません</div>'}`;
 
   if(dChart){dChart.destroy();dChart=null;}
@@ -760,7 +769,7 @@ function renderModal(uid){
     const many=daily.length>45;
     dChart=new Chart(document.getElementById('dc'),{type:'line',
       data:{labels:daily.map(d=>d.day),datasets:[
-        {label:`${win}日移動平均`,data:ma,...lineStyle('#ff3b5c'),
+        {label:`平均同接（${win}日移動平均）`,data:ma,...lineStyle('#ff3b5c'),
          borderWidth:3,pointRadius:many?0:4,pointHoverRadius:7,order:1}
       ]},
       options:{responsive:true,maintainAspectRatio:false,...NOANIM,
@@ -770,7 +779,9 @@ function renderModal(uid){
           tooltip:{...TIP,callbacks:{
             title:it=>dayJp(daily[it[0].dataIndex].day),
             label:it=>{if(it.datasetIndex)return null;const i=it.dataIndex,d=daily[i];
-              return[` 日次平均   ${fmt(d.val)}`,` ${win}日移動平均 ${fmt(ma[i])}`,` 配信数     ${d.n}`];}}}},
+              const o=[` 平均同接   ${fmt(d.val)}`,` ${win}日移動平均 ${fmt(ma[i])}`];
+              if(d.peak!=null)o.push(` 最高同接   ${fmt(d.peak)}`);
+              o.push(` 配信数     ${d.n}`);return o;}}}},
         scales:{x:{...AXIS.x,ticks:{...AXIS.x.ticks,callback:function(v){
             const d=this.getLabelForValue(v);if(!d)return'';
             const x=new Date(d+'T00:00:00+09:00');return`${x.getMonth()+1}/${x.getDate()}`;}}},
