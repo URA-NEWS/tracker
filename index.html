@@ -81,6 +81,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
 .tag.dor{background:rgba(255,179,64,.16);color:var(--warn);border-color:transparent}
 .tag.live{background:var(--live);color:#fff;border-color:transparent}
 .v2{font-size:17px;font-weight:800;font-variant-numeric:tabular-nums;text-align:right}
+.v2 .u{font-size:11px;font-weight:600;color:var(--sub);margin-left:2px}
 .v2 small{display:block;font-size:10.5px;color:#5f6a83;font-weight:600;margin-top:2px}
 .pct{font-size:15px;font-weight:800;text-align:right;font-variant-numeric:tabular-nums}
 .acts2{display:flex;gap:4px;justify-content:flex-end}
@@ -135,6 +136,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
 .kpi{background:var(--panel2);border-radius:12px;padding:12px 13px}
 .kpi .l{font-size:11.5px;color:var(--sub);letter-spacing:.05em;margin-bottom:6px}
 .kpi .v{font-size:23px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+.kpi .v .u,.st .v .u,.bigv .u,.dl .v .u{font-size:.5em;font-weight:600;color:var(--sub);margin-left:3px}
 .cbox{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:16px}
 .cbox h3{font-size:14px;font-weight:700;margin-bottom:8px}
 .cbox canvas{height:340px!important}
@@ -185,11 +187,11 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
     <div class="heroTop">
       <div>
         <div class="bigl" id="heroLabel">全体 平均同接（最新日）</div>
-        <div class="bigv" id="heroVal">—</div>
+        <div class="bigv"><span id="heroVal">—</span><span class="u">人</span></div>
       </div>
       <div id="heroTotalBox">
         <div class="bigl" style="color:#2ee6a8">総来場者（最新日）</div>
-        <div class="bigv" id="heroVal2" style="font-size:38px;color:#2ee6a8">—</div>
+        <div class="bigv" style="font-size:38px;color:#2ee6a8"><span id="heroVal2">—</span><span class="u">人</span></div>
       </div>
       <div class="deltas" id="deltas"></div>
     </div>
@@ -376,13 +378,16 @@ function broadcastsOf(st){if(!st)return[];
     if(b.source==='archive'&&(b.peak!=null||b.total_final))return{t:new Date(b.started_at).getTime(),
       started_at:b.started_at,live:false,archive:true,avg:null,peak:b.peak??null,total:b.total_final||0};
     return null;}).filter(Boolean).sort((a,b)=>a.t-b.t);}
-const RATIO={twitcasting:0.879,kick:0.860};
+const RATIO={twitcasting:0.879,kick:0.857};
+const RATIO_VIEW={twitcasting:0.120,kick:0.169};
 // 平均同接: 実測があれば実測、無ければ最高同接から推定
 function valOf(x){
   if(x.avg!=null)return x.avg;
   if(x.peak!=null)return Math.round(x.peak*(RATIO[platform]||0.88));
+  if(x.total)return Math.round(x.total*(RATIO_VIEW[platform]||0.15));
   return null;
 }
+const isEstimated=x=>x.avg==null;
 const peakOf=x=>x.peak;
 
 // 個別: 日別平均
@@ -478,7 +483,7 @@ async function loadCompare(){
         interaction:{mode:'index',intersect:false},
         plugins:{legend:LEGEND,tooltip:{...TIP,callbacks:{
           title:it=>dayJp(days[it[0].dataIndex]),
-          label:it=>it.parsed.y==null?null:` ${it.dataset.label}  ${fmt(it.parsed.y)}`}}},
+          label:it=>it.parsed.y==null?null:` ${it.dataset.label}  ${fmt(it.parsed.y)} 人`}}},
         scales:{x:{...AXIS.x,ticks:{...AXIS.x.ticks,callback:function(v){
             const d=this.getLabelForValue(v);if(!d)return'';
             const x=new Date(d+'T00:00:00+09:00');return`${x.getMonth()+1}/${x.getDate()}`;}}},
@@ -487,10 +492,10 @@ async function loadCompare(){
     const last=p=>{const a=byP[p];return a.length?a[a.length-1]:null;};
     const t=last('twitcasting'),k=last('kick');
     document.getElementById('cmpStats').innerHTML=`
-      <div class="st"><div class="l">ツイキャス 平均同接</div><div class="v" style="color:#8fb0ff">${fmt(t&&t.overall_avg)}</div></div>
-      <div class="st"><div class="l">Kick 平均同接</div><div class="v" style="color:#7fe6c4">${fmt(k&&k.overall_avg)}</div></div>
-      <div class="st"><div class="l">ツイキャス 配信者数</div><div class="v">${fmt(t&&t.broadcasters)}</div></div>
-      <div class="st"><div class="l">Kick 配信者数</div><div class="v">${fmt(k&&k.broadcasters)}</div></div>
+      <div class="st"><div class="l">ツイキャス 平均同接</div><div class="v" style="color:#8fb0ff">${fmt(t&&t.overall_avg)}<span class="u">人</span></div></div>
+      <div class="st"><div class="l">Kick 平均同接</div><div class="v" style="color:#7fe6c4">${fmt(k&&k.overall_avg)}<span class="u">人</span></div></div>
+      <div class="st"><div class="l">ツイキャス 配信者数</div><div class="v">${fmt(t&&t.broadcasters)}<span class="u">人</span></div></div>
+      <div class="st"><div class="l">Kick 配信者数</div><div class="v">${fmt(k&&k.broadcasters)}<span class="u">人</span></div></div>
       <div class="st"><div class="l">同接比（Kick/ツイキャス）</div><div class="v">${(t&&k&&t.overall_avg)?Math.round(k.overall_avg/t.overall_avg*100)+'%':'—'}</div></div>`;
   }catch(e){showErr('比較データ取得エラー: '+e.message);}
 }
@@ -510,10 +515,10 @@ async function loadHeatmap(){
       html+=`<div class="hl">${DOW[d-1]}</div>`;
       for(let h=0;h<24;h++){
         const v=g[d+'_'+h]||0;
-        html+=`<div class="cell" ${v?`title="${DOW[d-1]} ${h}時 平均同接 ${fmt(v)}"`:''} style="${v?`background:${withAlpha('#5b8cff',0.10+0.90*(v/max))}`:''}"></div>`;
+        html+=`<div class="cell" ${v?`title="${DOW[d-1]} ${h}時 平均同接 ${fmt(v)}人"`:''} style="${v?`background:${withAlpha('#5b8cff',0.10+0.90*(v/max))}`:''}"></div>`;
       }
     }
-    html+='</div><div class="hmleg">少 <i style="background:'+withAlpha('#5b8cff',.15)+'"></i><i style="background:'+withAlpha('#5b8cff',.45)+'"></i><i style="background:'+withAlpha('#5b8cff',.75)+'"></i><i style="background:'+withAlpha('#5b8cff',1)+'"></i> 多（最大 '+fmt(max)+'）</div>';
+    html+='</div><div class="hmleg">少 <i style="background:'+withAlpha('#5b8cff',.15)+'"></i><i style="background:'+withAlpha('#5b8cff',.45)+'"></i><i style="background:'+withAlpha('#5b8cff',.75)+'"></i><i style="background:'+withAlpha('#5b8cff',1)+'"></i> 多（最大 '+fmt(max)+'人）</div>';
     document.getElementById('hmOverall').innerHTML=html;
   }catch(e){showErr('ヒートマップ取得エラー: '+e.message);}
 }
@@ -527,8 +532,8 @@ async function loadDuration(){
       <div class="dur">
         <div style="font-weight:700">${esc(r.bucket)}</div>
         <div class="bar"><i style="width:${max?Math.round(Number(r.avg_conc)/max*100):0}%"></i></div>
-        <div class="n">${fmt(r.avg_conc)}<small>平均同接</small></div>
-        <div class="n">${fmt(r.broadcasts)}<small>配信数</small></div>
+        <div class="n">${fmt(r.avg_conc)}<span style="font-size:11px;color:#5f6a83">人</span><small>平均同接</small></div>
+        <div class="n">${fmt(r.broadcasts)}<span style="font-size:11px;color:#5f6a83">本</span><small>配信数</small></div>
       </div>`).join('');
   }catch(e){showErr('配信時間分析エラー: '+e.message);}
 }
@@ -542,7 +547,7 @@ async function loadAlerts(){
         <img src="${esc(r.image||PH)}" onerror="this.src='${PH}'">
         <div style="min-width:0">
           <div class="a1">${esc(r.name)}</div>
-          <div class="a2">直近${r.n}配信 ${fmt(r.recent)} ← 前${r.n}配信 ${fmt(r.prev)}</div>
+          <div class="a2">直近${r.n}配信 ${fmt(r.recent)}人 ← その前${r.n}配信 ${fmt(r.prev)}人</div>
         </div>
         <div class="a3">▲ +${r.pct}%</div>
       </div>`).join('');
@@ -596,7 +601,7 @@ function renderOverall(){
   document.getElementById('deltas').innerHTML=cmp(1,'前日')+cmp(7,'先週')+cmp(30,'先月');
 
   document.getElementById('note').textContent=rows.length
-    ? `${rows[0].day} 〜 ${rows[rows.length-1].day}／${rows.length}日分・のべ${rows.reduce((t,r)=>t+Number(r.broadcasts||0),0).toLocaleString('ja-JP')}配信を集計　　※平均同接は、本ツールが実測した配信はその実測値、過去配信は実測データから求めた比率（平均÷最高＝約0.88）で最高同接から推定した値です。`
+    ? `${rows[0].day} 〜 ${rows[rows.length-1].day}／${rows.length}日分・のべ${rows.reduce((t,r)=>t+Number(r.broadcasts||0),0).toLocaleString('ja-JP')}配信を集計　　※平均同接は、本ツールが実測した配信はその実測値。過去配信は実測データから求めた比率で推定しています（ツイキャス: 最高同接×0.88／Kick: 総来場者×0.17、相関0.96）。`
     : 'まだ集計できるデータがありません。「過去取込」を押すと一気に貯まります。';
 
   const win=winFor(rows.length);
@@ -620,22 +625,23 @@ function renderOverall(){
           title:it=>dayJp(rows[it[0].dataIndex].day),
           label:it=>{if(it.datasetIndex)return null;const i=it.dataIndex,r=rows[i];
             const out=[
-              ` 平均同接（日）    ${fmt(r.overall_avg)}`,
-              ` 平均同接（${win}日）  ${fmt(avgMA[i])}`];
+              ` 平均同接（日）    ${fmt(r.overall_avg)} 人${r.overall_avg_measured==null?'（推定）':''}`,
+              ` 平均同接（${win}日）  ${fmt(avgMA[i])} 人`];
             if(r.overall_avg_measured!=null)
-              out.push(` └ 実測分のみ      ${fmt(r.overall_avg_measured)}（${fmt(r.measured_broadcasts)}/${fmt(r.broadcasts)}配信）`);
+              out.push(` └ 実測分のみ      ${fmt(r.overall_avg_measured)} 人（${fmt(r.measured_broadcasts)}/${fmt(r.broadcasts)}配信）`);
             out.push(
-              ` 最高同接の平均    ${fmt(r.overall_peak_avg)}`,
-              ` 総来場者          ${fmt(r.overall_total_viewers)}`,
-              ` 配信数 / 配信者数 ${fmt(r.broadcasts)} / ${fmt(r.broadcasters)}`,
-              ` その日の最高      ${fmt(r.day_max_peak)}`);
+              r.overall_peak_avg!=null?` 最高同接の平均    ${fmt(r.overall_peak_avg)} 人`:` 最高同接の平均    実測データなし`,
+              ` 総来場者          ${fmt(r.overall_total_viewers)} 人`,
+              ` 配信数 / 配信者数 ${fmt(r.broadcasts)} 本 / ${fmt(r.broadcasters)} 人`,
+              ` その日の最高      ${fmt(r.day_max_peak)} 人`);
             return out;}}}},
       scales:{
         x:{...AXIS.x,ticks:{...AXIS.x.ticks,callback:function(v){
             const d=this.getLabelForValue(v);if(!d)return'';
             const x=new Date(d+'T00:00:00+09:00');return`${x.getMonth()+1}/${x.getDate()}`;}}},
-        y:{...AXIS.y,position:'left',ticks:{...AXIS.y.ticks,color:'#8fb0ff'}},
+        y:{...AXIS.y,position:'left',title:{display:true,text:'平均同接（人）',color:'#8fb0ff',font:{size:11,weight:'700'}},ticks:{...AXIS.y.ticks,color:'#8fb0ff'}},
         y1:{...AXIS.y,position:'right',grid:{display:false},
+            title:{display:true,text:'総来場者（人）',color:'#7fe6c4',font:{size:11,weight:'700'}},
             ticks:{...AXIS.y.ticks,color:'#7fe6c4',
               callback:v=>v>=10000?(v/10000)+'万':v.toLocaleString('ja-JP')}}
       }}});
@@ -649,14 +655,14 @@ function renderStats(){
   const curAvg=liveNow.length?Math.round(curSum/liveNow.length):null;
   const allDays=overall.map(r=>Number(r.overall_avg||0)).filter(v=>v>0);
   document.getElementById('stats3').innerHTML=`
-    <div class="st"><div class="l">いま配信中の平均同接</div><div class="v" style="color:var(--live)">${fmt(curAvg)}</div></div>
-    <div class="st"><div class="l">いま配信中の合計同接</div><div class="v">${fmt(curSum)}</div></div>
-    <div class="st"><div class="l">最新日の配信者数</div><div class="v">${fmt(last&&last.broadcasters)}</div></div>
-    <div class="st"><div class="l">最新日の総来場者</div><div class="v">${fmt(last&&last.overall_total_viewers)}</div></div>
-    <div class="st"><div class="l">最新日の最高同接平均</div><div class="v">${fmt(last&&last.overall_peak_avg)}</div></div>
-    <div class="st"><div class="l">最新日のトップ同接</div><div class="v">${fmt(last&&last.day_max_peak)}</div></div>
-    <div class="st"><div class="l">全期間の平均同接</div><div class="v">${fmt(mean(allDays))}</div></div>
-    <div class="st"><div class="l">集計日数</div><div class="v">${overall.length}</div></div>`;
+    <div class="st"><div class="l">いま配信中の平均同接</div><div class="v" style="color:var(--live)">${fmt(curAvg)}<span class="u">人</span></div></div>
+    <div class="st"><div class="l">いま配信中の合計同接</div><div class="v">${fmt(curSum)}<span class="u">人</span></div></div>
+    <div class="st"><div class="l">最新日の配信者数</div><div class="v">${fmt(last&&last.broadcasters)}<span class="u">人</span></div></div>
+    <div class="st"><div class="l">最新日の総来場者</div><div class="v">${fmt(last&&last.overall_total_viewers)}<span class="u">人</span></div></div>
+    <div class="st"><div class="l">最新日の最高同接平均</div><div class="v">${fmt(last&&last.overall_peak_avg)}<span class="u">人</span></div></div>
+    <div class="st"><div class="l">最新日のトップ同接</div><div class="v">${fmt(last&&last.day_max_peak)}<span class="u">人</span></div></div>
+    <div class="st"><div class="l">全期間の平均同接</div><div class="v">${fmt(mean(allDays))}<span class="u">人</span></div></div>
+    <div class="st"><div class="l">集計日数</div><div class="v">${overall.length}<span class="u">日</span></div></div>`;
 }
 
 /* ===== 個別リスト ===== */
@@ -686,10 +692,10 @@ function renderTable(){
   });
 
   const hd=`<div class="thd"><span></span><span></span><span>配信者</span>
-    <span style="text-align:right">直近平均<br><span style="font-weight:400">同時接続</span></span>
-    <span style="text-align:right" class="hidesm">比較元</span>
-    <span style="text-align:right" class="hidesm">通算平均<br><span style="font-weight:400">同時接続</span></span>
-    <span style="text-align:right">増減</span><span></span></div>`;
+    <span style="text-align:right">直近の平均同接<br><span style="font-weight:400">（人）</span></span>
+    <span style="text-align:right" class="hidesm">その前の平均同接<br><span style="font-weight:400">（人）</span></span>
+    <span style="text-align:right" class="hidesm">通算の平均同接<br><span style="font-weight:400">（人）</span></span>
+    <span style="text-align:right">増減率</span><span></span></div>`;
 
   const body=rows.length?rows.map((r,i)=>{
     const cls=r.tr?(r.tr.pct>0?'up':r.tr.pct<0?'down':'flat'):'flat';
@@ -704,9 +710,9 @@ function renderTable(){
           <span class="tag ${r.b.pinned?'pin':''}">${r.b.pinned?'手動':'自動'}</span>
           ${r.b.dormant?'<span class="tag dor">休止</span>':''}</div>
       </div>
-      <div class="v2">${fmt(r.recent)}<small>${r.tr?(r.tr.unit?'直近'+r.tr.n+'日':'直近'+r.tr.n+'配信'):'直近'}</small></div>
-      <div class="v2 hidesm">${r.tr?fmt(r.tr.prev):'—'}<small>${r.tr?(r.tr.unit?'前'+r.tr.n+'日':'前'+r.tr.n+'配信'):'比較元'}</small></div>
-      <div class="v2 hidesm">${fmt(r.all)}<small>通算(${r.bs.length}配信)</small></div>
+      <div class="v2">${fmt(r.recent)}<span class="u">人</span><small>${r.tr?(r.tr.unit?'直近'+r.tr.n+'日の平均':'直近'+r.tr.n+'配信の平均'):'直近'}</small></div>
+      <div class="v2 hidesm">${r.tr?fmt(r.tr.prev)+'<span class="u">人</span>':'—'}<small>${r.tr?(r.tr.unit?'その前'+r.tr.n+'日の平均':'その前'+r.tr.n+'配信の平均'):'比較対象なし'}</small></div>
+      <div class="v2 hidesm">${fmt(r.all)}<span class="u">人</span><small>全${r.bs.length}配信の平均</small></div>
       <div class="pct ${cls}">${pct}</div>
       <div class="acts2">
         ${r.b.dormant?`<button class="iconbtn" onclick="event.stopPropagation();wake('${esc(r.b.user_id)}')" title="再開">▶</button>`:''}
@@ -742,12 +748,12 @@ function renderModal(uid){
       <button class="x" onclick="closeModal()">✕</button>
     </div>
     <div class="kpis">
-      <div class="kpi"><div class="l">現在の同接</div><div class="v">${live?fmt(l&&l.concurrent):'—'}</div></div>
-      <div class="kpi"><div class="l">直近の平均同接</div><div class="v">${fmt(tr?tr.recent:(bs.length?valOf(bs[bs.length-1]):null))}</div></div>
-      <div class="kpi"><div class="l">通算の平均同接</div><div class="v">${fmt(bs.length?mean(bs.map(valOf)):null)}</div></div>
-      <div class="kpi"><div class="l">最高同接</div><div class="v">${fmt(peak)}</div></div>
+      <div class="kpi"><div class="l">現在の同接</div><div class="v">${live?fmt(l&&l.concurrent)+'<span class="u">人</span>':'—'}</div></div>
+      <div class="kpi"><div class="l">直近の平均同接</div><div class="v">${fmt(tr?tr.recent:(bs.length?valOf(bs[bs.length-1]):null))}<span class="u">人</span></div></div>
+      <div class="kpi"><div class="l">通算の平均同接</div><div class="v">${fmt(bs.length?mean(bs.map(valOf).filter(v=>v!=null)):null)}<span class="u">人</span></div></div>
+      <div class="kpi"><div class="l">最高同接</div><div class="v">${fmt(peak)}<span class="u">人</span></div></div>
       <div class="kpi"><div class="l">トレンド</div><div class="v ${tr?(tr.pct>0?'up':tr.pct<0?'down':'flat'):'flat'}">${tr?(tr.pct>0?'+':'')+tr.pct+'%':'—'}</div></div>
-      <div class="kpi"><div class="l">記録配信数</div><div class="v">${bs.filter(x=>!x.live).length}</div></div>
+      <div class="kpi"><div class="l">記録配信数</div><div class="v">${bs.filter(x=>!x.live).length}<span class="u">本</span></div></div>
     </div>
     <div class="cbox"><h3>日ごとの平均同時接続</h3><canvas id="dc"></canvas></div>
     <div class="sect" style="margin-top:24px">配信ごとの記録</div>
@@ -758,7 +764,7 @@ function renderModal(uid){
         t=d>0?`<span class="trend up">▲ ${p}%</span>`:d<0?`<span class="trend down">▼ ${Math.abs(p)}%</span>`:'<span class="trend flat">±0</span>';}
       return`<div class="hrow">
         <span class="d">${new Date(x.started_at).toLocaleString('ja-JP',{year:'2-digit',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</span>
-        ${t}<span class="s">平均 ${fmt(valOf(x))}${x.avg==null&&x.peak!=null?'<span style="color:var(--sub);font-weight:400;font-size:11px">(推定)</span>':''}${x.peak!=null?` ／ 最高 ${fmt(x.peak)}`:''} ／ 総 ${fmt(x.total)}${x.archive?' <span style="color:var(--sub);font-weight:400">(過去)</span>':x.live?' <span style="color:var(--live);font-weight:400">(配信中)</span>':''}</span>
+        ${t}<span class="s">平均 ${fmt(valOf(x))}${isEstimated(x)?'<span style="color:var(--sub);font-weight:400;font-size:11px">(推定)</span>':''}${x.peak!=null?` ／ 最高 ${fmt(x.peak)}`:''} ／ 総 ${fmt(x.total)}${x.archive?' <span style="color:var(--sub);font-weight:400">(過去)</span>':x.live?' <span style="color:var(--live);font-weight:400">(配信中)</span>':''}</span>
       </div>`;}).join(''):'<div class="empty">まだ配信記録がありません</div>'}`;
 
   if(dChart){dChart.destroy();dChart=null;}
@@ -779,9 +785,9 @@ function renderModal(uid){
           tooltip:{...TIP,callbacks:{
             title:it=>dayJp(daily[it[0].dataIndex].day),
             label:it=>{if(it.datasetIndex)return null;const i=it.dataIndex,d=daily[i];
-              const o=[` 平均同接   ${fmt(d.val)}`,` ${win}日移動平均 ${fmt(ma[i])}`];
-              if(d.peak!=null)o.push(` 最高同接   ${fmt(d.peak)}`);
-              o.push(` 配信数     ${d.n}`);return o;}}}},
+              const o=[` 平均同接   ${fmt(d.val)} 人`,` ${win}日移動平均 ${fmt(ma[i])} 人`];
+              if(d.peak!=null)o.push(` 最高同接   ${fmt(d.peak)} 人`);
+              o.push(` 配信数     ${d.n} 本`);return o;}}}},
         scales:{x:{...AXIS.x,ticks:{...AXIS.x.ticks,callback:function(v){
             const d=this.getLabelForValue(v);if(!d)return'';
             const x=new Date(d+'T00:00:00+09:00');return`${x.getMonth()+1}/${x.getDate()}`;}}},
