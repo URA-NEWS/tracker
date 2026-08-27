@@ -197,6 +197,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
       <button class="btn ghost" onclick="discover()">自動収集</button>
       <span id="bfBtns"><button class="btn ghost" onclick="backfillMissing()">未取込を補完</button>
       <button class="btn ghost" onclick="backfill()">過去取込（全員）</button></span>
+      <button class="btn ghost" onclick="refreshFollowers()">フォロワー更新</button>
       <button class="btn ghost" onclick="exportCsv()">CSV</button>
       <button class="btn ghost" onclick="exportData()">JSON</button>
     </div>
@@ -632,6 +633,15 @@ async function loadAlerts(){
         <div class="a3">▲ +${r.pct}%</div>
       </div>`).join('');
   }catch(e){showErr('急上昇取得エラー: '+e.message);}
+}
+
+async function refreshFollowers(){
+  showErrPersist('フォロワーを取得中…（1〜2分かかります）');
+  try{
+    const j=await fetch(API+'/refresh-followers',{method:'POST'}).then(r=>r.json());
+    showErr(`フォロワー取得済み ${j.after}/${j.total}人（前回 ${j.before}人）`);
+    await loadAll();
+  }catch(e){showErr('エラー: '+e.message);}
 }
 
 function exportCsv(){
