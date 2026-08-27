@@ -228,7 +228,8 @@ function parseFansFromHtml(html, userId) {
   const re = new RegExp(`/${userId.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}/backers`, 'i');
   const idx = html.search(re);
   if (idx === -1) return null;
-  const win = html.slice(idx, idx + 600)
+  const win = html.slice(idx, idx + 1500)
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/g, ' ')
     .replace(/\s+/g, ' ');
@@ -1428,6 +1429,49 @@ const server = http.createServer((req, res) => {
       const r = await compactSamples();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(r));
+    })();
+    return;
+  }
+
+  // フォロワー抽出の診断: GET /api/debug-fans/<id>
+  if (pathname.startsWith('/api/debug-fans/') && req.method === 'GET') {
+    (async () => {
+      const uid = decodeURIComponent(pathname.replace('/api/debug-fans/', ''));
+      const out = { user_id: uid };
+      try {
+        const r = await fetch(`https://twitcasting.tv/${encodeURIComponent(uid)}`, {
+          headers: { 'User-Agent': UA, 'Accept-Language': 'ja' }
+        });
+        out.status = r.status;
+        const html = await r.text();
+        out.html_len = html.length;
+        const re = new RegExp(`/${uid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/backers`, 'i');
+        const idx = html.search(re);
+        out.backers_index = idx;
+        if (idx !== -1) {
+          out.window = html.slice(idx, idx + 1500)
+            .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/&nbsp;/g, ' ')
+            .replace(/\s+/g, ' ')
+            .slice(0, 400);
+        }
+        out.parsed = parseFansFromHtml(html, uid);
+      } catch (e) { out.error = e.message; }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(out, null, 2));
+    })();
+    return;
+  }
+
+  // フォロワーを今すぐ更新: POST /api/refresh-followers
+  if (pathname === '/api/refresh-followers' && req.method === 'POST') {
+    (async () => {
+      const before = config.broadcasters.filter(b => b.follower_count).length;
+      await refreshAllUserInfo();
+      const after = config.broadcasters.filter(b => b.follower_count).length;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ before, after, total: config.broadcasters.length }));
     })();
     return;
   }
