@@ -584,6 +584,29 @@ async function backfillKick(b) {
     const id = `karc_${uid}_${v.id || ls.id}`;
     if (broadcasterStats[uid].history.some(h => h.broadcast_id === id)) continue;
 
+    // 同じ配信を監視済みなら、その行の総来場者だけ補完する（二重登録を防ぐ）
+    const sMs = startedMs, eMs = startedMs + durMs;
+    const dup = (broadcasterStats[uid].history || []).find(h => {
+      if (h.source !== 'live') return false;
+      const hs = new Date(h.started_at).getTime();
+      return hs >= sMs - 10 * 60000 && hs <= eMs + 20 * 60000;
+    });
+    if (dup) {
+      if (!dup.total_final || dup.total_final < total) {
+        dup.total_final = total;
+        if (!dup.duration) dup.duration = Math.round(durMs / 1000);
+        if (USE_SB) {
+          try {
+            await sb('PATCH', 'tw_broadcasts', {
+              query: `?id=eq.${encodeURIComponent(dup.broadcast_id)}`,
+              body: { total, duration: dup.duration }
+            });
+          } catch (e) { console.error('kick merge:', e.message); }
+        }
+      }
+      continue;
+    }
+
     const obj = {
       broadcast_id: id,
       started_at: new Date(startedMs).toISOString(),
