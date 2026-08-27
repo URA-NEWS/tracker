@@ -334,8 +334,8 @@ async function refreshOne(b) {
       if ((b.platform || 'twitcasting') === 'whowatch') {
         const w = await fetchWWUser(wwPath(b.user_id), b.ww_user_id);
         if (w) {
-          if (w.name && w.name !== b.name) { b.name = w.name; changed = true; }
-          if (w.image && w.image !== b.image) { b.image = w.image; changed = true; }
+          if (w.name && w.name !== b.name && w.source !== 'html') { b.name = w.name; changed = true; }
+          if (w.image && w.image !== b.image && w.source !== 'html') { b.image = w.image; changed = true; }
           if (w.user_id_num && w.user_id_num !== b.ww_user_id) { b.ww_user_id = w.user_id_num; changed = true; }
           if (w.followers && w.followers !== b.follower_count) {
             b.follower_count = w.followers; b.follower_updated_at = new Date().toISOString(); changed = true;
@@ -711,9 +711,9 @@ async function fetchWWUser(userPath, numId) {
     });
     if (r.ok) {
       const html = await r.text();
-      let fol = null, name = null, image = null, idNum = numId || null;
+      let fol = null, idNum = numId || null, m;
 
-      let m = html.match(/"follower_count"\s*:\s*"?([\d,]+)"?/)
+      m = html.match(/"follower_count"\s*:\s*"?([\d,]+)"?/)
            || html.match(/"followerCount"\s*:\s*"?([\d,]+)"?/);
       if (m) fol = parseWWCount(m[1]);
       if (!fol) {
@@ -722,15 +722,12 @@ async function fetchWWUser(userPath, numId) {
         const mm = t.match(/フォロワー[^0-9]{0,20}([\d,]+\s*[万億]?)/);
         if (mm) fol = parseWWCount(mm[1]);
       }
-      m = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i);
-      if (m) name = m[1].replace(/\s*[-|｜].*$/, '').trim();
-      m = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
-      if (m) image = m[1];
+      // og:title / og:image はプロフィールページではサイト共通値（「ふわっち」）になるため使わない
       m = html.match(/"user"\s*:\s*\{\s*"id"\s*:\s*(\d+)/);
       if (m) idNum = Number(m[1]);
 
-      if (name || fol) {
-        return { name: name || userPath, image, followers: fol, user_id_num: idNum, source: 'html' };
+      if (fol || idNum) {
+        return { name: null, image: null, followers: fol, user_id_num: idNum, source: 'html' };
       }
     }
   } catch (e) { /* give up */ }
@@ -1391,6 +1388,14 @@ async function checkOne(bc, now) {
   if (bc.platform === 'whowatch') {
     const live = await getWWLive();
     const hit = (live || []).find(x => x.user_id === uid);
+    if (hit) {
+      // 配信一覧の情報が最も正確なので、名前・アイコン・数値IDをここで補正する
+      let ch = false;
+      if (hit.name && hit.name !== bc.name) { bc.name = hit.name; ch = true; }
+      if (hit.image && hit.image !== bc.image) { bc.image = hit.image; ch = true; }
+      if (hit.user_num && hit.user_num !== bc.ww_user_id) { bc.ww_user_id = hit.user_num; ch = true; }
+      if (ch) { try { await persistBroadcasterAdd(bc); } catch (e) {} }
+    }
     s = hit ? {
       concurrent: hit.viewers, total: hit.total,
       timestamp: new Date().toISOString(), title: hit.title || null
@@ -1806,13 +1811,42 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // ふわっちの名前・アイコンを配信一覧から復旧: POST /api/ww-fix-profiles
+  if (pathname === '/api/ww-fix-profiles' && req.method === 'POST') {
+    (async () => {
+      const live = await getWWLive();
+      const byId = new Map((live || []).map(x => [x.user_id, x]));
+      let fixed = 0, cleared = 0;
+      for (const b of config.broadcasters) {
+        if (b.platform !== 'whowatch') continue;
+        const hit = byId.get(b.user_id);
+        if (hit) {
+          let ch = false;
+          if (hit.name && hit.name !== b.name) { b.name = hit.name; ch = true; }
+          if (hit.image && hit.image !== b.image) { b.image = hit.image; ch = true; }
+          if (hit.user_num && hit.user_num !== b.ww_user_id) { b.ww_user_id = hit.user_num; ch = true; }
+          if (ch) { fixed++; try { await persistBroadcasterAdd(b); } catch (e) {} }
+        } else if (b.name === 'ふわっち') {
+          // 配信中でない壊れたレコードは user_path を暫定名にする
+          b.name = wwPath(b.user_id); b.image = null; cleared++;
+          try { await persistBroadcasterAdd(b); } catch (e) {}
+        }
+      }
+      if (!USE_SB) saveJson(CONFIG_FILE, config);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ fixed, cleared }));
+    })();
+    return;
+  }
+
   // ふわっちAPI総当たり診断: GET /api/probe-ww/<user_path>
   if (pathname.startsWith('/api/probe-ww/') && req.method === 'GET') {
     (async () => {
       const path = decodeURIComponent(pathname.replace('/api/probe-ww/', ''));
       const live = await getWWLive();
       const hit = (live || []).find(x => x.user_id === WW_PREFIX + path);
-      const numId = hit ? hit.user_num : null;
+      const known = config.broadcasters.find(x => x.user_id === WW_PREFIX + path);
+      const numId = (hit && hit.user_num) || (known && known.ww_user_id) || null;
       const out = { user_path: path, num_id: numId, from_live_list: !!hit, results: [] };
       const urls = [];
       if (numId) {
