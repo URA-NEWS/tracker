@@ -334,8 +334,10 @@ async function refreshOne(b) {
       if ((b.platform || 'twitcasting') === 'whowatch') {
         const w = await fetchWWUser(wwPath(b.user_id), b.ww_user_id);
         if (w) {
-          if (w.name && w.name !== b.name && w.source !== 'html') { b.name = w.name; changed = true; }
-          if (w.image && w.image !== b.image && w.source !== 'html') { b.image = w.image; changed = true; }
+          if (w.source === 'api') {
+            if (w.name && w.name !== b.name) { b.name = w.name; changed = true; }
+            if (w.image && w.image !== b.image) { b.image = w.image; changed = true; }
+          }
           if (w.user_id_num && w.user_id_num !== b.ww_user_id) { b.ww_user_id = w.user_id_num; changed = true; }
           if (w.followers && w.followers !== b.follower_count) {
             b.follower_count = w.followers; b.follower_updated_at = new Date().toISOString(); changed = true;
@@ -677,12 +679,10 @@ async function fetchWWUser(userPath, numId) {
   // 1) API候補
   const tries = [];
   if (numId) {
-    tries.push(`https://api.whowatch.tv/users/${numId}`);
+    // 実測で確認済み: /users/{id}/profile が正解
     tries.push(`https://api.whowatch.tv/users/${numId}/profile`);
-    tries.push(`https://api.whowatch.tv/profiles/${numId}`);
+    tries.push(`https://api.whowatch.tv/users/${numId}`);
   }
-  tries.push(`https://api.whowatch.tv/users/${encodeURIComponent(userPath)}`);
-  tries.push(`https://api.whowatch.tv/profiles/${encodeURIComponent(userPath)}`);
 
   for (const u of tries) {
     try {
@@ -690,7 +690,7 @@ async function fetchWWUser(userPath, numId) {
       if (!r.ok) continue;
       const j = await r.json();
       const usr = j.user || j.profile || j;
-      if (!usr || (!usr.name && !usr.id)) continue;
+      if (!usr || (!usr.name && !usr.user_id && !usr.id)) continue;
       const fol = Number(
         usr.follower_count ?? usr.followers_count ?? usr.fan_count ??
         j.follower_count ?? j.followers_count ?? 0) || null;
@@ -698,8 +698,9 @@ async function fetchWWUser(userPath, numId) {
         name: usr.name || userPath,
         image: usr.icon_url || usr.profile_icon_url || null,
         followers: fol,
-        user_id_num: usr.id ?? numId ?? null,
-        source: u
+        followees: Number(usr.follow_count ?? 0) || null,
+        user_id_num: usr.user_id ?? usr.id ?? numId ?? null,
+        source: 'api'
       };
     } catch (e) { /* next */ }
   }
@@ -744,23 +745,19 @@ async function fetchWWArchives(b) {
   }
   const tries = [];
   if (numId) {
-    tries.push(`https://api.whowatch.tv/users/${numId}/lives`);
-    tries.push(`https://api.whowatch.tv/users/${numId}/archives`);
-    tries.push(`https://api.whowatch.tv/users/${numId}/past_lives`);
+    // 実測で確認済み: /users/{id}/live_histories が正解
     tries.push(`https://api.whowatch.tv/users/${numId}/live_histories`);
-    tries.push(`https://api.whowatch.tv/users/${numId}/movies`);
-    tries.push(`https://api.whowatch.tv/users/${numId}/replays`);
+    tries.push(`https://api.whowatch.tv/users/${numId}/live_histories?page=1`);
   }
-  tries.push(`https://api.whowatch.tv/profiles/${encodeURIComponent(path)}/lives`);
-  tries.push(`https://api.whowatch.tv/users/${encodeURIComponent(path)}/lives`);
 
   for (const u of tries) {
     try {
       const r = await fetch(u, { headers: WW_HDRS });
       if (!r.ok) continue;
       const j = await r.json();
-      const arr = Array.isArray(j) ? j : (j.lives || j.archives || j.data || null);
-      if (!Array.isArray(arr) || !arr.length) continue;
+      const arr = Array.isArray(j) ? j : (j.live_histories || j.lives || j.archives || j.data || null);
+      if (!Array.isArray(arr)) continue;
+      if (!arr.length) return { ok: true, endpoint: u, items: [] };
       const out = arr.map(l => {
         const st = l.started_at || l.created_at;
         if (!st) return null;
@@ -777,7 +774,7 @@ async function fetchWWArchives(b) {
           duration: dur > 100000 ? Math.round(dur / 1000) : dur
         };
       }).filter(Boolean);
-      if (out.length) return { ok: true, endpoint: u, items: out };
+      return { ok: true, endpoint: u, items: out };
     } catch (e) { /* next */ }
   }
   return { ok: false, items: [] };
@@ -1394,6 +1391,16 @@ async function checkOne(bc, now) {
       if (hit.name && hit.name !== bc.name) { bc.name = hit.name; ch = true; }
       if (hit.image && hit.image !== bc.image) { bc.image = hit.image; ch = true; }
       if (hit.user_num && hit.user_num !== bc.ww_user_id) { bc.ww_user_id = hit.user_num; ch = true; }
+      if (bc.ww_user_id && !bc.follower_count) {
+        const w = await fetchWWUser(wwPath(uid), bc.ww_user_id);
+        if (w && w.followers) {
+          bc.follower_count = w.followers;
+          bc.follower_updated_at = new Date().toISOString();
+          if (w.name) bc.name = w.name;
+          if (w.image) bc.image = w.image;
+          ch = true;
+        }
+      }
       if (ch) { try { await persistBroadcasterAdd(bc); } catch (e) {} }
     }
     s = hit ? {
@@ -1826,10 +1833,20 @@ const server = http.createServer((req, res) => {
           if (hit.image && hit.image !== b.image) { b.image = hit.image; ch = true; }
           if (hit.user_num && hit.user_num !== b.ww_user_id) { b.ww_user_id = hit.user_num; ch = true; }
           if (ch) { fixed++; try { await persistBroadcasterAdd(b); } catch (e) {} }
-        } else if (b.name === 'ふわっち') {
-          // 配信中でない壊れたレコードは user_path を暫定名にする
-          b.name = wwPath(b.user_id); b.image = null; cleared++;
-          try { await persistBroadcasterAdd(b); } catch (e) {}
+        } else {
+          const w = await fetchWWUser(wwPath(b.user_id), b.ww_user_id);
+          if (w && w.source === 'api') {
+            let ch = false;
+            if (w.name && w.name !== b.name) { b.name = w.name; ch = true; }
+            if (w.image && w.image !== b.image) { b.image = w.image; ch = true; }
+            if (w.followers && w.followers !== b.follower_count) {
+              b.follower_count = w.followers; b.follower_updated_at = new Date().toISOString(); ch = true;
+            }
+            if (ch) { fixed++; try { await persistBroadcasterAdd(b); } catch (e) {} }
+          } else if (b.name === 'ふわっち') {
+            b.name = wwPath(b.user_id); b.image = null; cleared++;
+            try { await persistBroadcasterAdd(b); } catch (e) {}
+          }
         }
       }
       if (!USE_SB) saveJson(CONFIG_FILE, config);
