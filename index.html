@@ -248,15 +248,20 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
     <div class="heroTop">
       <div>
         <div class="bigl" id="heroLabel">配信者1人あたりの平均同接（最新日）</div>
-        <div class="bigv"><span id="heroVal">—</span><span class="u">人</span></div>
+        <div class="bigv"><span id="heroVal">—</span><span class="u" id="heroUnit">人</span></div>
       </div>
       <div id="heroTotalBox">
-        <div class="bigl" style="color:#2ee6a8">総来場者（最新日）</div>
-        <div class="bigv" style="font-size:38px;color:#2ee6a8"><span id="heroVal2">—</span><span class="u">人</span></div>
+        <div class="bigl" style="color:#2ee6a8" id="heroLabel2">総来場者・全配信の合計（最新日）</div>
+        <div class="bigv" style="font-size:38px;color:#2ee6a8"><span id="heroVal2">—</span><span class="u" id="heroUnit2">人</span></div>
       </div>
       <div class="deltas" id="deltas"></div>
     </div>
     <div class="ctrl">
+      <div class="seg" id="metric">
+        <button data-k="avg" class="on">平均同接</button>
+        <button data-k="total">総来場者</button>
+        <button data-k="watch">総視聴時間</button>
+      </div>
       <div class="seg" id="range">
         <button data-k="30">30日</button>
         <button data-k="90" class="on">90日</button>
@@ -367,6 +372,7 @@ const API=location.origin+'/api';
 let config={broadcasters:[]},stats={},overall=[];
 let oChart=null,dChart=null,openUid=null;
 let platform='twitcasting';
+let metric='avg';
 let mainTab='overview',alertTh=50;
 let cmpChart=null;
 let range=90,listSort='pct',listFilter='active';
@@ -701,62 +707,42 @@ function renderOverall(){
   if(range>0)rows=rows.slice(-range);
 
   // 主役は「平均同接」（実測があれば実測、無ければ最高同接から推定）
-  const avgs=rows.map(r=>r.overall_avg==null?null:Number(r.overall_avg));
-  const peaks=rows.map(r=>r.overall_peak_avg==null?null:Number(r.overall_peak_avg));
-  const tots=rows.map(r=>r.overall_total_viewers==null?null:Number(r.overall_total_viewers));
-  document.getElementById('heroVal').textContent=fmt(avgs.length?avgs[avgs.length-1]:null);
-  const PFN={twitcasting:['ツイキャス','tw'],kick:['Kick（日本）','kk'],whowatch:['ふわっち','ww']};
-  const pf=PFN[platform]||PFN.twitcasting;
-  const badge=document.getElementById('pfBadge');
-  if(badge){ badge.className='pfbadge '+pf[1];
-    document.getElementById('pfBadgeText').textContent=pf[0]; }
-  document.getElementById('heroLabel').textContent=pf[0]+'｜配信者1人あたりの平均同接（最新日）';
-  document.getElementById('heroTotalBox').style.display='';
-  document.getElementById('heroVal2').textContent=fmt(tots.length?tots[tots.length-1]:null);
-
-  const cmp=(days,label)=>{
-    const all=doneAll.map(r=>Number(r.overall_avg||0));
-    if(all.length<2)return`<div class="dl"><div class="l">${label}</div><div class="v flat">—</div></div>`;
-    const recent=mean(all.slice(-days)),prev=mean(all.slice(-days*2,-days));
-    if(prev==null||!prev)return`<div class="dl"><div class="l">${label}</div><div class="v flat">—</div></div>`;
-    const p=Math.round((recent-prev)/prev*100);
-    const cls=p>0?'up':p<0?'down':'flat';
-    return`<div class="dl"><div class="l">1人あたり平均 ${label}</div>
-      <div class="v ${cls}">${p>0?'▲ +':p<0?'▼ ':'± '}${Math.abs(p)}%</div></div>`;
+  const M={
+    avg:{label:'配信者1人あたりの平均同接',unit:'人',color:'#5b8cff',
+         get:r=>r.overall_avg==null?null:Number(r.overall_avg)},
+    total:{label:'総来場者（全配信の合計）',unit:'人',color:'#2ee6a8',
+         get:r=>r.overall_total_viewers==null?null:Number(r.overall_total_viewers)},
+    watch:{label:'総視聴時間（全配信の合計）',unit:'時間',color:'#ffb340',
+         get:r=>r.total_watch_sec==null?null:Math.round(Number(r.total_watch_sec)/3600)}
   };
-  document.getElementById('deltas').innerHTML=
-    (partial?`<div class="dl" style="background:rgba(255,179,64,.12);border:1px solid rgba(255,179,64,.3)">
-      <div class="l" style="color:#ffb340">本日（集計中）</div>
-      <div class="v" style="color:#ffb340">${fmt(partial.overall_avg)}<span class="u">人</span></div></div>`:'')
-    +cmp(1,'前日')+cmp(7,'先週')+cmp(30,'先月');
-
-  document.getElementById('note').textContent=rows.length
-    ? `【${pf[0]}】${rows[0].day} 〜 ${rows[rows.length-1].day}／${rows.length}日分・のべ${rows.reduce((t,r)=>t+Number(r.broadcasts||0),0).toLocaleString('ja-JP')}配信を集計　　※まず配信者ごとにその日の平均同接を出し、それを配信者単位で平均しています（1人1票）。配信本数の多い配信者に偏らない集計です。実測した配信は実測値、過去配信は実測データから自動算出した比率で推定しています（${platform==='kick'?'総来場者×'+(RATIO_VIEW.kick||0).toFixed(3):'最高同接×'+(RATIO.twitcasting||0).toFixed(3)}）。`
-    : `【${pf[0]}】まだ集計できるデータがありません。監視を続けると翌日から集計されます。`;
+  const mm=M[metric]||M.avg;
+  const vals=rows.map(mm.get);
+  const avgs=rows.map(r=>r.overall_avg==null?null:Number(r.overall_avg));
+  const tots=rows.map(r=>r.overall_total_viewers==null?null:Number(r.overall_total_viewers));
+  const watchH=rows.map(r=>r.total_watch_sec==null?null:Math.round(Number(r.total_watch_sec)/3600));
 
   const win=winFor(rows.length);
-  const avgMA=movingAvg(avgs,win), totMA=movingAvg(tots,win);
+  const valMA=movingAvg(vals,win);
   const many=rows.length>45;
 
   if(oChart)oChart.destroy();
   oChart=new Chart(document.getElementById('overall'),{type:'line',
     data:{labels:rows.map(r=>r.day),datasets:[
-      {label:`${pf[0]}｜1人あたり平均同接（${win}日移動平均）`,data:avgMA,...lineStyle('#5b8cff'),spanGaps:true,
-       borderWidth:3,pointRadius:many?0:4,pointHoverRadius:7,yAxisID:'y',order:1},
-      {label:`${pf[0]}｜総来場者（${win}日移動平均）`,data:totMA,...lineStyle('#2ee6a8'),
-       spanGaps:true,backgroundColor:gradFill('#2ee6a8',false),
-       borderWidth:2.6,pointRadius:many?0:4,pointHoverRadius:7,yAxisID:'y1',order:2}
+      {label:`${pf[0]}｜${mm.label}（${win}日移動平均）`,data:valMA,...lineStyle(mm.color),spanGaps:true,
+       borderWidth:3.2,pointRadius:many?0:4,pointHoverRadius:8,yAxisID:'y',order:1}
     ]},
     options:{responsive:true,maintainAspectRatio:false,...NOANIM,
-      layout:{padding:{top:8,right:12,left:2,bottom:2}},
+      layout:{padding:{top:10,right:16,left:6,bottom:4}},
       interaction:{mode:'index',intersect:false},
       plugins:{legend:LEGEND,
         tooltip:{...TIP,callbacks:{
           title:it=>pf[0]+'　'+dayJp(rows[it[0].dataIndex].day),
           label:it=>{if(it.datasetIndex)return null;const i=it.dataIndex,r=rows[i];
             const out=[
-              ` 1人あたり平均同接  ${fmt(r.overall_avg)} 人${r.overall_avg_measured==null?'（推定）':''}`,
-              ` ${win}日移動平均       ${fmt(avgMA[i])} 人`];
+              ` ${mm.label}  ${fmt(mm.get(r))} ${mm.unit}`,
+              ` ${win}日移動平均  ${fmt(valMA[i])} ${mm.unit}`,
+              ` ─────────────`,
+              ` 1人あたり平均同接  ${fmt(r.overall_avg)} 人${r.overall_avg_measured==null?'（推定）':''}`];
             if(r.overall_avg_measured!=null)
               {
                 const cov=Number(r.broadcasts)?Math.round(Number(r.measured_broadcasts)/Number(r.broadcasts)*100):0;
@@ -764,7 +750,8 @@ function renderOverall(){
               }
             out.push(
               r.overall_peak_avg!=null?` 最高同接の平均    ${fmt(r.overall_peak_avg)} 人`:` 最高同接の平均    実測データなし`,
-              ` 総来場者          ${fmt(r.overall_total_viewers)} 人`,
+              ` 総来場者（合計）  ${fmt(r.overall_total_viewers)} 人`,
+              ` 総視聴時間（合計）${fmt(watchH[i])} 時間`,
               ` 配信数 / 配信者数 ${fmt(r.broadcasts)} 本 / ${fmt(r.broadcasters)} 人`,
               ` その日の最高      ${fmt(r.day_max_peak)} 人`);
             return out;}}}},
@@ -772,11 +759,8 @@ function renderOverall(){
         x:{...AXIS.x,ticks:{...AXIS.x.ticks,callback:function(v){
             const d=this.getLabelForValue(v);if(!d)return'';
             const x=new Date(d+'T00:00:00+09:00');return`${x.getMonth()+1}/${x.getDate()}`;}}},
-        y:{...AXIS.y,position:'left',title:{display:true,text:'1人あたり平均同接（人）',color:'#8fb0ff',font:{size:11,weight:'700'}},ticks:{...AXIS.y.ticks,color:'#8fb0ff'}},
-        y1:{...AXIS.y,position:'right',grid:{display:false},
-            title:{display:true,text:'総来場者（人）',color:'#7fe6c4',font:{size:11,weight:'700'}},
-            ticks:{...AXIS.y.ticks,color:'#7fe6c4',
-              callback:v=>v>=10000?(v/10000)+'万':v.toLocaleString('ja-JP')}}
+        y:{...AXIS.y,position:'left',ticks:{...AXIS.y.ticks,color:'#a8b4cc',padding:14,
+            callback:v=>v>=10000?(v/10000)+'万':v.toLocaleString('ja-JP')}}
       }}});
   oChart.$pulse=[0,1];
 }
@@ -793,6 +777,8 @@ function renderStats(){
     <div class="st"><div class="l">いま配信中の合計同接</div><div class="v">${fmt(curSum)}<span class="u">人</span></div></div>
     <div class="st"><div class="l">最新完了日の配信者数</div><div class="v">${fmt(last&&last.broadcasters)}<span class="u">人</span></div></div>
     <div class="st"><div class="l">最新完了日の総来場者</div><div class="v">${fmt(last&&last.overall_total_viewers)}<span class="u">人</span></div></div>
+    <div class="st"><div class="l">最新完了日の総視聴時間</div><div class="v">${fmt(last&&last.total_watch_sec?Math.round(last.total_watch_sec/3600):null)}<span class="u">時間</span></div></div>
+    <div class="st"><div class="l">最新完了日の総配信時間</div><div class="v">${fmt(last&&last.total_stream_sec?Math.round(last.total_stream_sec/3600):null)}<span class="u">時間</span></div></div>
     <div class="st"><div class="l">最新完了日の最高同接平均</div><div class="v">${fmt(last&&last.overall_peak_avg)}<span class="u">人</span></div></div>
     <div class="st"><div class="l">最新完了日のトップ同接</div><div class="v">${fmt(last&&last.day_max_peak)}<span class="u">人</span></div></div>
     <div class="st"><div class="l">全期間の1人あたり平均</div><div class="v">${fmt(mean(allDays))}<span class="u">人</span></div></div>
@@ -1210,6 +1196,7 @@ document.getElementById('mainTab').addEventListener('click',e=>{
   const b=e.target.closest('button');if(!b)return;
   [...b.parentNode.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');
   showTab(b.dataset.k);});
+bindSeg('metric',k=>{metric=k;renderOverall();});
 bindSeg('range',k=>{range=Number(k);renderOverall();});
 bindSeg('listSort',k=>{listSort=k;renderTable();});
 bindSeg('listFilter',k=>{listFilter=k;renderTable();});
