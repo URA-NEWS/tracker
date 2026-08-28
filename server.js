@@ -22,9 +22,10 @@ const KICK_ID = process.env.KICK_CLIENT_ID || '';
 const KICK_SECRET = process.env.KICK_CLIENT_SECRET || '';
 const USE_KICK = !!(KICK_ID && KICK_SECRET);
 const KICK_LIMIT = 50;
-const SAMPLE_RETENTION_DAYS = 7;   // 生サンプルの保持日数
-const MONITOR_CONCURRENCY = 10;
-const MISS_TOLERANCE = 3;          // 連続でこの回数取れなければ配信終了とみなす    // 監視の並列数
+const SAMPLE_RETENTION_DAYS = 3;   // 生サンプルの保持日数
+const MONITOR_CONCURRENCY = 20;    // 監視の並列数
+const MISS_TOLERANCE = 3;          // 連続でこの回数取れなければ配信終了とみなす
+const HISTORY_KEEP = 40;           // メモリに保持する直近配信数（集計はDB側で行う）
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 let kickToken = null, kickTokenExp = 0;
 
@@ -92,6 +93,7 @@ async function bootstrap() {
     config = { broadcasters: bcs || [] };
 
     const brs = await sbAll('tw_broadcasts', '?select=id,user_id,started_at,ended_at,peak,total,duration,source,platform,avg_concurrent,sample_count,category,title&order=started_at.asc');
+    console.log(`[bootstrap] 配信記録 ${brs.length} 件を読み込み（メモリ保持は直近${HISTORY_KEEP}件/人）`);
     const cutoff = new Date(Date.now() - SAMPLE_RETENTION_DAYS * 864e5).toISOString();
     const smp = await sbAll('tw_samples', `?select=broadcast_id,concurrent,total,ts&ts=gte.${cutoff}&order=ts.asc`, 1000, 300);
 
@@ -134,7 +136,8 @@ async function bootstrap() {
         obj.avg_concurrent = sm.length ? Math.round(sm.reduce((t, x) => t + x.concurrent, 0) / sm.length) : null;
         obj.peak = sm.length ? Math.max(...sm.map(x => x.concurrent)) : obj.peak;
         obj.total_final = sm.length ? sm[sm.length - 1].total : obj.total_final;
-        obj.duration = Math.max(1, Math.round((new Date(obj.ended_at) - new Date(obj.started_at)) / 1000));
+        const dsec = Math.round((new Date(obj.ended_at) - new Date(obj.started_at)) / 1000);
+        obj.duration = (dsec > 0 && dsec <= 86400) ? dsec : null;
         obj.sample_count = sm.length;
         staleToClose.push({ uid: b.user_id, obj });
         broadcasterStats[b.user_id].history.push(obj);
@@ -142,6 +145,12 @@ async function bootstrap() {
         broadcasterStats[b.user_id].current_broadcast = obj;
       }
     });
+    // メモリ使用量を抑えるため、履歴は直近分だけ残す（集計はDBビューで行う）
+    for (const uid of Object.keys(broadcasterStats)) {
+      const h = broadcasterStats[uid].history;
+      if (h.length > HISTORY_KEEP) broadcasterStats[uid].history = h.slice(-HISTORY_KEEP);
+    }
+
     if (staleToClose.length) {
       console.log(`[bootstrap] 開きっぱなしの配信 ${staleToClose.length} 件を終了処理`);
       for (const x of staleToClose) {
@@ -476,6 +485,7 @@ async function runBackfillJob(targets) {
   backfillJob.current = null;
   backfillJob.running = false;
   backfillJob.finishedAt = new Date().toISOString();
+  clearCache();
   console.log(`[backfill] 完了 新規${backfillJob.imported}件 / タイトル補完${backfillJob.titleFixed}件`);
 }
 
@@ -514,7 +524,8 @@ async function backfillUser(userId, maxMovies = 500) {
       if (m.is_live) continue;
       const startedMs = Number(m.created) * 1000;
       if (!startedMs) continue;
-      const dur = Number(m.duration || 0);
+      let dur = Number(m.duration || 0);
+      if (!(dur > 0) || dur > 86400) dur = null;
       const peak = Number(m.max_view_count ?? 0);
       const total = Number(m.total_view_count ?? m.current_view_count ?? 0);
       if (!peak && !total) continue;
@@ -539,7 +550,7 @@ async function backfillUser(userId, maxMovies = 500) {
       }
 
       // 監視済みの同一配信があれば、そちらに最高同接・総来場者を補完して二重登録を防ぐ
-      const eMs = startedMs + dur * 1000;
+      const eMs = startedMs + (dur || 0) * 1000;
       const dup = (broadcasterStats[userId].history || []).find(h => {
         if (h.source !== 'live') return false;
         const hs = new Date(h.started_at).getTime();
@@ -567,7 +578,7 @@ async function backfillUser(userId, maxMovies = 500) {
       const obj = {
         broadcast_id: id,
         started_at: new Date(startedMs).toISOString(),
-        ended_at: new Date(startedMs + dur * 1000).toISOString(),
+        ended_at: new Date(startedMs + (dur || 0) * 1000).toISOString(),
         title: m.title || m.subtitle || null,
         source: 'archive',
         peak, total_final: total, duration: dur,
@@ -771,7 +782,7 @@ async function fetchWWArchives(b) {
           started_at: new Date(ms).toISOString(),
           title: l.title || null,
           total,
-          duration: dur > 100000 ? Math.round(dur / 1000) : dur
+          duration: (dur > 0 ? (dur > 100000 ? Math.round(dur / 1000) : dur) : null)
         };
       }).filter(Boolean);
       return { ok: true, endpoint: u, items: out };
@@ -815,7 +826,7 @@ async function backfillWW(b) {
       broadcast_id: id, started_at: v.started_at,
       ended_at: new Date(sMs + (v.duration || 0) * 1000).toISOString(),
       title: v.title, source: 'archive', platform: 'whowatch',
-      peak: null, total_final: v.total, duration: v.duration || 0, samples: []
+      peak: null, total_final: v.total, duration: v.duration || null, samples: []
     };
     broadcasterStats[uid].history.push(obj);
     rows.push({
@@ -1056,8 +1067,9 @@ async function backfillKick(b) {
     if (!startedRaw) continue;
     const startedMs = new Date(String(startedRaw).replace(' ', 'T') + (String(startedRaw).endsWith('Z') ? '' : 'Z')).getTime();
     if (!startedMs || isNaN(startedMs)) continue;
-    const durMs = Number(v.duration || ls.duration || 0);
-    if (!durMs) continue;                       // 配信中のものが混ざるので除外
+    let durMs = Number(v.duration || ls.duration || 0);
+    if (!durMs) continue;
+    if (durMs / 1000 > 86400) durMs = 0;                       // 配信中のものが混ざるので除外
     if (ls.is_live || v.is_live) continue;
     // Kick の viewer_count は「終了時点の残り人数」で最高同接ではないため使わない
     const total = Number(v.views ?? v.view_count ?? ls.views ?? 0);
@@ -1474,12 +1486,24 @@ async function checkOne(bc, now) {
     b.avg_concurrent = sm.length ? Math.round(sm.reduce((t, x) => t + x.concurrent, 0) / sm.length) : null;
     b.peak = sm.length ? Math.max(...sm.map(x => x.concurrent)) : null;
     b.total_final = sm.length ? sm[sm.length - 1].total : null;
-    b.duration = Math.round((new Date(b.ended_at) - new Date(b.started_at)) / 1000);
+    const durSec = Math.round((new Date(b.ended_at) - new Date(b.started_at)) / 1000);
+    b.duration = (durSec > 0 && durSec <= 86400) ? durSec : null;
     b.sample_count = sm.length;
     broadcasterStats[uid].history.push(b);
+    if (broadcasterStats[uid].history.length > HISTORY_KEEP)
+      broadcasterStats[uid].history = broadcasterStats[uid].history.slice(-HISTORY_KEEP);
     broadcasterStats[uid].current_broadcast = null;
     offlineCheckedAt[uid] = now;
     console.log(`[${uid}] 配信終了 avg=${b.avg_concurrent} peak=${b.peak} n=${sm.length}`);
+    if (b.avg_concurrent == null && b.peak == null && !b.total_final) {
+      // 中身のない配信記録は残さない
+      broadcasterStats[uid].history = broadcasterStats[uid].history.filter(h => h !== b);
+      if (USE_SB) {
+        try { await sb('DELETE', 'tw_broadcasts', { query: `?id=eq.${encodeURIComponent(b.broadcast_id)}` }); }
+        catch (e) {}
+      }
+      return;
+    }
     if ((bc.platform || 'twitcasting') === 'kick') {
       // Kick は配信中に総視聴数が取れないので、終了後にVODから補完
       setTimeout(() => { backfillKick(bc).catch(() => {}); }, 5 * 60 * 1000);
@@ -1506,6 +1530,14 @@ async function monitorBroadcasters() {
 }
 
 // ---------- サンプル圧縮・保持期間 ----------
+// 直近の生サンプルを時間別集計へ反映（削除はしない）
+async function syncHourly() {
+  if (!USE_SB) return;
+  try {
+    await sb('POST', 'rpc/tw_sync_hourly', { body: {} });
+  } catch (e) { console.error('[hourly]', e.message); }
+}
+
 async function compactSamples() {
   if (!USE_SB) return { ok: false, reason: 'local' };
   const cutoff = new Date(Date.now() - SAMPLE_RETENTION_DAYS * 864e5).toISOString();
@@ -1528,22 +1560,57 @@ async function compactSamples() {
     });
   }
   try { await sb('POST', 'rpc/tw_refresh_ratio', { body: {} }); } catch (e) { console.error('[ratio]', e.message); }
+  await loadRatios();
+  clearCache();
   console.log('[compact] 完了');
   return { ok: true };
 }
 
+// ---------- 集計APIのキャッシュ ----------
+const apiCache = new Map();
+async function cached(key, ttlMs, fn) {
+  const hit = apiCache.get(key);
+  if (hit && Date.now() - hit.at < ttlMs) return hit.val;
+  const val = await fn();
+  apiCache.set(key, { at: Date.now(), val });
+  return val;
+}
+function clearCache(prefix) {
+  for (const k of apiCache.keys()) if (!prefix || k.startsWith(prefix)) apiCache.delete(k);
+}
+
 // ---------- 集計ヘルパー ----------
+let RATIOS = {};   // DB(tw_ratio_mv)から読み込む実測比率
+const RATIO_MIN_N = 30;
+
+async function loadRatios() {
+  if (!USE_SB) return;
+  try {
+    const rows = await sb('GET', 'tw_ratio_mv', { query: '?select=*' });
+    const m = {};
+    (rows || []).forEach(r => {
+      m[r.platform] = {
+        peak: Number(r.ratio_peak_n) >= RATIO_MIN_N ? Number(r.ratio_peak) : null,
+        view: Number(r.ratio_view_n) >= RATIO_MIN_N ? Number(r.ratio_view) : null,
+        peak_n: Number(r.ratio_peak_n) || 0,
+        view_n: Number(r.ratio_view_n) || 0
+      };
+    });
+    RATIOS = m;
+    console.log('[ratio]', JSON.stringify(m));
+  } catch (e) { console.error('[ratio]', e.message); }
+}
+
+// 実測が十分でなければ推定しない（nullを返す）
 function ratioOf(plat) {
-  if (plat === 'kick') return { peak: 0.857, view: 0.169 };
-  if (plat === 'whowatch') return { peak: 0.85, view: 0.15 };
-  return { peak: 0.879, view: 0.120 };
+  return RATIOS[plat] || { peak: null, view: null, peak_n: 0, view_n: 0 };
 }
 function estAvg(b, plat) {
   const r = ratioOf(plat);
   if (b.avg_concurrent != null) return b.avg_concurrent;
-  if (b.peak != null) return Math.round(b.peak * r.peak);
-  if (b.total_final) return Math.round(b.total_final * r.view);
-  return null;
+  if (b.peak != null && r.peak) return Math.round(b.peak * r.peak);
+  if (b.total_final && r.view) return Math.round(b.total_final * r.view);
+  return null;   // 根拠のある比率が無い間は推定しない
 }
 function broadcastList(uid, plat) {
   const st = broadcasterStats[uid];
@@ -1611,6 +1678,15 @@ function summarize(uid, plat) {
       ? Math.round(withTot.reduce((t, x) => t + (x.val / x.total * 100), 0) / withTot.length)
       : null
   };
+}
+
+function requireAdmin(req, res) {
+  if (!ADMIN_TOKEN) return true;   // 未設定なら従来どおり通す
+  const t = url.parse(req.url, true).query.token || req.headers['x-admin-token'];
+  if (t === ADMIN_TOKEN) return true;
+  res.writeHead(403, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'forbidden' }));
+  return false;
 }
 
 // ---------- HTTP ----------
@@ -1689,7 +1765,8 @@ const server = http.createServer((req, res) => {
     (async () => {
       try {
         if (!USE_SB) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('[]'); return; }
-        const rows = await sbAll('tw_daily_overall', '?select=*&order=day.asc');
+        const rows = await cached('compare', 5 * 60 * 1000, () =>
+          sbAll('tw_daily_overall', '?select=*&order=day.asc'));
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(rows));
       } catch (e) {
@@ -1706,7 +1783,8 @@ const server = http.createServer((req, res) => {
       try {
         if (!USE_SB) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('[]'); return; }
         const plat = (url.parse(req.url, true).query.platform) || 'twitcasting';
-        const rows = await sbAll('tw_heatmap_overall', `?select=*&platform=eq.${encodeURIComponent(plat)}`);
+        const rows = await cached(`heat:${plat}`, 10 * 60 * 1000, () =>
+          sbAll('tw_heatmap_overall', `?select=*&platform=eq.${encodeURIComponent(plat)}`));
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(rows));
       } catch (e) {
@@ -1722,7 +1800,8 @@ const server = http.createServer((req, res) => {
       try {
         if (!USE_SB) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('[]'); return; }
         const plat = (url.parse(req.url, true).query.platform) || 'twitcasting';
-        const rows = await sbAll('tw_duration_analysis', `?select=*&platform=eq.${encodeURIComponent(plat)}&order=sort_key.asc`);
+        const rows = await cached(`dur:${plat}`, 10 * 60 * 1000, () =>
+          sbAll('tw_duration_analysis', `?select=*&platform=eq.${encodeURIComponent(plat)}&order=sort_key.asc`));
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(rows));
       } catch (e) {
@@ -1820,6 +1899,7 @@ const server = http.createServer((req, res) => {
 
   // ふわっちの名前・アイコンを配信一覧から復旧: POST /api/ww-fix-profiles
   if (pathname === '/api/ww-fix-profiles' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return;
     (async () => {
       const live = await getWWLive();
       const byId = new Map((live || []).map(x => [x.user_id, x]));
@@ -1952,6 +2032,7 @@ const server = http.createServer((req, res) => {
 
   // フォロワーをリセットして再取得: POST /api/reset-followers
   if (pathname === '/api/reset-followers' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return;
     (async () => {
       for (const b of config.broadcasters) {
         if ((b.platform || 'twitcasting') !== 'twitcasting') continue;
@@ -2194,7 +2275,8 @@ const server = http.createServer((req, res) => {
     (async () => {
       try {
         if (!USE_SB) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('[]'); return; }
-        const rows = await sb('GET', 'tw_ratio_mv', { query: '?select=*' });
+        const rows = await cached('ratio', 10 * 60 * 1000, () =>
+          sb('GET', 'tw_ratio_mv', { query: '?select=*' }));
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(rows || []));
       } catch (e) {
@@ -2210,7 +2292,8 @@ const server = http.createServer((req, res) => {
       try {
         if (USE_SB) {
           const plat = (url.parse(req.url, true).query.platform) || 'twitcasting';
-          const rows = await sbAll('tw_daily_overall', `?select=*&platform=eq.${encodeURIComponent(plat)}&order=day.asc`);
+          const rows = await cached(`overall:${plat}`, 3 * 60 * 1000, () =>
+            sbAll('tw_daily_overall', `?select=*&platform=eq.${encodeURIComponent(plat)}&order=day.asc`));
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(rows || []));
           return;
@@ -2290,6 +2373,7 @@ const server = http.createServer((req, res) => {
 
   // 自動枠の整理: POST /api/prune
   if (pathname === '/api/prune' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return;
     (async () => {
       const r = await pruneAuto();
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2343,6 +2427,7 @@ const server = http.createServer((req, res) => {
 
   // 0サンプル一括削除: POST /api/cleanup
   if (pathname === '/api/cleanup' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return;
     (async () => {
       let removed = 0;
       const strip = (arr) => {
@@ -2369,39 +2454,91 @@ const server = http.createServer((req, res) => {
   }
 
   if (pathname === '/api/twitcas/stats' && req.method === 'GET') {
-    const plat = (url.parse(req.url, true).query.platform) || null;
-    const out = {};
-    const byId = new Map(config.broadcasters.map(b => [b.user_id, b]));
-    for (const uid of Object.keys(broadcasterStats)) {
-      const bc = byId.get(uid);
-      const p = (bc && bc.platform) || 'twitcasting';
-      if (plat && p !== plat) continue;
-      out[uid] = summarize(uid, p);
-    }
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(out));
+    (async () => {
+      const plat = (url.parse(req.url, true).query.platform) || null;
+      const out = {};
+      const byId = new Map(config.broadcasters.map(b => [b.user_id, b]));
+
+      // 集計はDBビューから取得（メモリに全履歴を持たない）
+      let sums = [];
+      if (USE_SB) {
+        try {
+          sums = await cached(`summary:${plat || 'all'}`, 60 * 1000, () =>
+            sbAll('tw_broadcaster_summary',
+              plat ? `?select=*&platform=eq.${encodeURIComponent(plat)}` : '?select=*'));
+        } catch (e) { console.error('summary:', e.message); }
+      }
+      const byUid = new Map((sums || []).map(r => [r.user_id, r]));
+
+      for (const b of config.broadcasters) {
+        const p = b.platform || 'twitcasting';
+        if (plat && p !== plat) continue;
+        const st = broadcasterStats[b.user_id];
+        const cb = st && st.current_broadcast;
+        const ls = cb && cb.samples && cb.samples.length ? cb.samples[cb.samples.length - 1] : null;
+        const r = byUid.get(b.user_id);
+        out[b.user_id] = {
+          live: !!cb,
+          cur: ls ? ls.concurrent : null,
+          curTotal: ls ? ls.total : null,
+          n: r ? Number(r.n) : 0,
+          allAvg: r ? r.all_avg : null,
+          recent: r ? r.recent : null,
+          best: r ? r.best : null,
+          d30avg: r ? r.d30avg : null,
+          d30n: r ? Number(r.d30n || 0) : 0,
+          lastTs: r && r.last_ts ? new Date(r.last_ts).getTime() : null,
+          retention: r ? r.retention : null,
+          watchHours: r ? r.watch_hours : null
+        };
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(out));
+    })();
     return;
   }
 
   // 配信者1人の詳細: GET /api/broadcaster?id=
   if (pathname === '/api/broadcaster' && req.method === 'GET') {
-    const uid = String(url.parse(req.url, true).query.id || '');
-    const st = broadcasterStats[uid];
-    const bc = config.broadcasters.find(b => b.user_id === uid);
-    const p = (bc && bc.platform) || 'twitcasting';
-    const list = st ? broadcastList(uid, p) : [];
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      user_id: uid,
-      found: !!st,
-      history_count: st ? (st.history || []).length : 0,
-      list_count: list.length,
-      daily: dailySeries(list),
-      broadcasts: list.slice(-100),
-      current_samples: (st && st.current_broadcast)
-        ? (st.current_broadcast.samples || []).slice(-720)
-        : []
-    }));
+    (async () => {
+      const uid = String(url.parse(req.url, true).query.id || '');
+      const bc = config.broadcasters.find(b => b.user_id === uid);
+      const p = (bc && bc.platform) || 'twitcasting';
+      const st = broadcasterStats[uid];
+      let list = [];
+      if (USE_SB) {
+        try {
+          const rows = await sbAll('tw_broadcasts',
+            `?select=started_at,ended_at,peak,total,duration,source,avg_concurrent,title` +
+            `&user_id=eq.${encodeURIComponent(uid)}&order=started_at.asc`);
+          const r = ratioOf(p);
+          list = (rows || []).map(b => {
+            const avg = b.avg_concurrent;
+            let val = avg;
+            if (val == null && b.peak != null && r.peak) val = Math.round(b.peak * r.peak);
+            if (val == null && b.total && r.view) val = Math.round(b.total * r.view);
+            if (val == null) return null;
+            return {
+              t: new Date(b.started_at).getTime(), started_at: b.started_at,
+              live: !b.ended_at, archive: b.source === 'archive',
+              avg, peak: b.peak, total: b.total || 0,
+              title: b.title || null, duration: b.duration || 0, val
+            };
+          }).filter(Boolean);
+        } catch (e) { console.error('broadcaster:', e.message); }
+      }
+      if (!list.length && st) list = broadcastList(uid, p);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        user_id: uid,
+        found: !!st || list.length > 0,
+        list_count: list.length,
+        daily: dailySeries(list),
+        broadcasts: list.slice(-100),
+        current_samples: (st && st.current_broadcast)
+          ? (st.current_broadcast.samples || []).slice(-720) : []
+      }));
+    })();
     return;
   }
 
@@ -2457,14 +2594,7 @@ const server = http.createServer((req, res) => {
   }
 
   if (pathname.startsWith('/api/config/broadcasters/') && req.method === 'DELETE') {
-    if (ADMIN_TOKEN) {
-      const t = url.parse(req.url, true).query.token || req.headers['x-admin-token'];
-      if (t !== ADMIN_TOKEN) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'forbidden' }));
-        return;
-      }
-    }
+    if (!requireAdmin(req, res)) return;
     (async () => {
       const uid = decodeURIComponent(pathname.replace('/api/config/broadcasters/', ''));
       config.broadcasters = config.broadcasters.filter(b => b.user_id !== uid);
@@ -2491,9 +2621,12 @@ const server = http.createServer((req, res) => {
 
 // ---------- 起動 ----------
 bootstrap().then(() => {
-  server.listen(PORT, () => {
+  if (!ADMIN_TOKEN) console.warn('[warn] ADMIN_TOKEN が未設定です。削除APIが保護されません。');
+server.listen(PORT, () => {
     console.log(`Tracker on :${PORT} / storage=${USE_SB ? 'supabase' : 'local'} / twitcasting=${USE_TC_API} / kick=${USE_KICK} / broadcasters=${config.broadcasters.length}`);
   });
+  loadRatios();
+  setInterval(loadRatios, 60 * 60 * 1000);
   refreshAllUserInfo();
   discoverTopLives();
   setInterval(discoverTopLives, 5 * 60 * 1000);
@@ -2501,6 +2634,8 @@ bootstrap().then(() => {
   discoverWW(); setInterval(discoverWW, 5 * 60 * 1000);
   setTimeout(async () => { const r = await pruneAuto(); console.log('[prune]', JSON.stringify(r)); }, 10 * 1000);
   setInterval(() => pruneAuto(), 60 * 60 * 1000);
+  setTimeout(syncHourly, 2 * 60 * 1000);
+  setInterval(syncHourly, 60 * 60 * 1000);
   setTimeout(compactSamples, 3 * 60 * 1000);
   setInterval(compactSamples, 6 * 60 * 60 * 1000);
   // 開きっぱなしの配信を定期的に閉じる
@@ -2509,13 +2644,14 @@ bootstrap().then(() => {
     for (const uid of Object.keys(broadcasterStats)) {
       const cb = broadcasterStats[uid].current_broadcast;
       if (!cb) continue;
-      if (now - new Date(cb.started_at).getTime() > 12 * 3600e3) {
+      if (now - new Date(cb.started_at).getTime() > 8 * 3600e3) {
         const sm = (cb.samples || []).filter(x => x.concurrent > 0);
         cb.ended_at = new Date().toISOString();
         cb.avg_concurrent = sm.length ? Math.round(sm.reduce((t, x) => t + x.concurrent, 0) / sm.length) : null;
         cb.peak = sm.length ? Math.max(...sm.map(x => x.concurrent)) : null;
         cb.total_final = sm.length ? sm[sm.length - 1].total : null;
-        cb.duration = Math.round((new Date(cb.ended_at) - new Date(cb.started_at)) / 1000);
+        const cbd = Math.round((new Date(cb.ended_at) - new Date(cb.started_at)) / 1000);
+        cb.duration = (cbd > 0 && cbd <= 86400) ? cbd : null;
         cb.sample_count = sm.length;
         broadcasterStats[uid].history.push(cb);
         broadcasterStats[uid].current_broadcast = null;
