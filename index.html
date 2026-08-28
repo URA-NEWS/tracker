@@ -66,6 +66,8 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
 .seg button.on{background:var(--accent);color:#fff}
 .ctrl{display:flex;gap:9px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
 #overall{height:440px!important}
+#cmpChart{height:440px!important;width:100%!important}
+.chartbox{position:relative;height:440px;width:100%;margin-top:14px}
 .note{font-size:12.5px;line-height:1.7;color:#78829b;margin-top:14px}
 .warnbar{display:flex;align-items:flex-start;gap:9px;background:rgba(255,179,64,.12);
   border:1px solid rgba(255,179,64,.35);border-radius:12px;padding:11px 15px;margin-bottom:16px;
@@ -318,7 +320,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
     </div>
     <div class="hero">
       <div class="bigl">ツイキャス vs Kick vs ふわっち</div>
-      <canvas id="cmpChart" style="height:440px!important;margin-top:14px"></canvas>
+      <div class="chartbox"><canvas id="cmpChart"></canvas></div>
       <div class="note">3プラットフォームの「配信者1人あたりの平均同接」を同一軸で比較します。Kick・ふわっちは監視開始以降のデータが中心です。</div>
     </div>
     <div class="stats3" id="cmpStats"></div>
@@ -425,12 +427,14 @@ const AXIS={x:{grid:{display:false},border:{display:false},
     ticks:{color:'#98a3ba',font:{size:13,weight:'600'},padding:12,maxTicksLimit:6}}};
 const LEGEND={display:true,position:'top',align:'end',
   labels:{color:'#c3ccdd',boxWidth:11,boxHeight:11,usePointStyle:true,pointStyle:'circle',
-    font:{size:14,weight:'700'},padding:20}};
-const TIP={backgroundColor:'rgba(13,17,26,.98)',borderColor:'rgba(255,255,255,.14)',borderWidth:1,
-  titleColor:'#ffffff',bodyColor:'#dbe3f0',padding:16,cornerRadius:12,caretSize:7,
-  boxWidth:10,boxHeight:10,usePointStyle:true,
-  titleFont:{size:15,weight:'800'},bodyFont:{size:14,weight:'600',family:'monospace'},
-  bodySpacing:7,titleMarginBottom:10,displayColors:false};
+    font:{size:14.5,weight:'700'},padding:22}};
+const TIP={backgroundColor:'rgba(10,14,22,.985)',borderColor:'rgba(255,255,255,.18)',borderWidth:1,
+  titleColor:'#ffffff',bodyColor:'#e6ebf5',padding:{top:14,bottom:14,left:18,right:18},
+  cornerRadius:12,caretSize:8,caretPadding:10,
+  boxWidth:10,boxHeight:10,usePointStyle:true,position:'nearest',
+  titleFont:{size:16,weight:'800',lineHeight:1.4},
+  bodyFont:{size:15,weight:'600',lineHeight:1.65},
+  bodySpacing:4,titleMarginBottom:12,displayColors:false};
 const NOANIM={animation:false,animations:{colors:false,x:false,y:false},
   transitions:{active:{animation:{duration:160}}}};
 
@@ -589,7 +593,7 @@ async function loadCompare(){
         interaction:{mode:'index',intersect:false},
         plugins:{legend:LEGEND,tooltip:{...TIP,callbacks:{
           title:it=>dayJp(days[it[0].dataIndex]),
-          label:it=>it.parsed.y==null?null:` ${it.dataset.label}  ${fmt(it.parsed.y)} 人`}}},
+          label:it=>it.parsed.y==null?null:`${it.dataset.label}　${fmt(it.parsed.y)} 人`}}},
         scales:{x:{...AXIS.x,ticks:{...AXIS.x.ticks,callback:function(v){
             const d=this.getLabelForValue(v);if(!d)return'';
             const x=new Date(d+'T00:00:00+09:00');return`${x.getMonth()+1}/${x.getDate()}`;}}},
@@ -785,21 +789,14 @@ function renderOverall(){
           title:it=>pf[0]+'　'+dayJp(rows[it[0].dataIndex].day),
           label:it=>{if(it.datasetIndex)return null;const i=it.dataIndex,r=rows[i];
             const out=[
-              ` ${mm.label}  ${fmt(mm.get(r))} ${mm.unit}`,
-              ` ${win}日移動平均  ${fmt(valMA[i])} ${mm.unit}`,
-              ` ─────────────`,
-              ` 1人あたり平均同接  ${fmt(r.overall_avg)} 人${r.overall_avg_measured==null?'（推定）':''}`];
-            if(r.overall_avg_measured!=null)
-              {
-                const cov=Number(r.broadcasts)?Math.round(Number(r.measured_broadcasts)/Number(r.broadcasts)*100):0;
-                out.push(` └ 実測分のみ      ${fmt(r.overall_avg_measured)} 人（${fmt(r.measured_broadcasts)}/${fmt(r.broadcasts)}配信 ${cov}%${cov<35?' ※偏りあり':''}）`);
-              }
-            out.push(
-              r.overall_peak_avg!=null?` 最高同接の平均    ${fmt(r.overall_peak_avg)} 人`:` 最高同接の平均    実測データなし`,
-              ` 総来場者（合計）  ${fmt(r.overall_total_viewers)} 人`,
-              ` 総視聴時間（合計）${fmt(watchH[i])} 時間`,
-              ` 配信数 / 配信者数 ${fmt(r.broadcasts)} 本 / ${fmt(r.broadcasters)} 人`,
-              ` その日の最高      ${fmt(r.day_max_peak)} 人`);
+              `${mm.label}　${fmt(mm.get(r))} ${mm.unit}`,
+              `${win}日移動平均　${fmt(valMA[i])} ${mm.unit}`,
+              '',
+              `平均同接　${fmt(r.overall_avg)} 人`,
+              `総来場者　${fmt(r.overall_total_viewers)} 人`,
+              `総視聴時間　${fmt(watchH[i])} 時間`,
+              `配信数　${fmt(r.broadcasts)} 本 / ${fmt(r.broadcasters)} 人`
+            ];
             return out;}}}},
       scales:{
         x:{...AXIS.x,ticks:{...AXIS.x.ticks,callback:function(v){
@@ -982,9 +979,9 @@ async function renderModal(uid){
         plugins:{legend:LEGEND,tooltip:{...TIP,callbacks:{
           title:it=>dayJp(daily[it[0].dataIndex].day),
           label:it=>{const x=daily[it.dataIndex];
-            const o=[` 平均同接   ${fmt(x.val)} 人`,` ${win}日移動平均 ${fmt(ma[it.dataIndex])} 人`];
-            if(x.peak!=null)o.push(` 最高同接   ${fmt(x.peak)} 人`);
-            o.push(` 配信数     ${x.n} 本`);return o;}}}},
+            const o=[`平均同接　${fmt(x.val)} 人`,`${win}日移動平均　${fmt(ma[it.dataIndex])} 人`];
+            if(x.peak!=null)o.push(`最高同接　${fmt(x.peak)} 人`);
+            o.push(`配信数　${x.n} 本`);return o;}}}},
         scales:{x:{...AXIS.x,ticks:{...AXIS.x.ticks,callback:function(v){
             const dd=this.getLabelForValue(v);if(!dd)return'';
             const xx=new Date(dd+'T00:00:00+09:00');return`${xx.getMonth()+1}/${xx.getDate()}`;}}},
@@ -1004,7 +1001,7 @@ async function renderModal(uid){
           layout:{padding:{top:6,right:6,left:2,bottom:2}},
           interaction:{mode:'index',intersect:false},
           plugins:{legend:LEGEND,tooltip:{...TIP,callbacks:{
-            label:it=>` ${it.dataset.label}  ${fmt(it.parsed.y)} 人`}}},
+            label:it=>`${it.dataset.label}　${fmt(it.parsed.y)} 人`}}},
           scales:{x:{...AXIS.x,ticks:{...AXIS.x.ticks,maxTicksLimit:7}},y:AXIS.y}}});
       liveChart.$pulse=[0];
      }catch(e){ console.error('live chart:',e); }
@@ -1137,9 +1134,9 @@ function renderLookup(d){
         plugins:{legend:LEGEND,tooltip:{...TIP,callbacks:{
           title:it=>dayJp(daily[it[0].dataIndex].day),
           label:it=>{const x=daily[it.dataIndex];
-            const o=[` 平均同接   ${fmt(x.val)} 人`,` ${win}日移動平均 ${fmt(ma[it.dataIndex])} 人`];
-            if(x.peak!=null)o.push(` 最高同接   ${fmt(x.peak)} 人`);
-            o.push(` 配信数     ${x.n} 本`);return o;}}}},
+            const o=[`平均同接　${fmt(x.val)} 人`,`${win}日移動平均　${fmt(ma[it.dataIndex])} 人`];
+            if(x.peak!=null)o.push(`最高同接　${fmt(x.peak)} 人`);
+            o.push(`配信数　${x.n} 本`);return o;}}}},
         scales:{x:{...AXIS.x,ticks:{...AXIS.x.ticks,callback:function(v){
             const dd=this.getLabelForValue(v);if(!dd)return'';
             const xx=new Date(dd+'T00:00:00+09:00');return`${xx.getMonth()+1}/${xx.getDate()}`;}}},
