@@ -213,10 +213,10 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
     <div class="meta">
       <span class="chip" id="chip">—</span>
       <span id="lastUpdate">—</span>
-      <button class="btn ghost" onclick="discover()">自動収集</button>
-      <span id="bfBtns"><button class="btn ghost" onclick="backfillMissing()">未取込を補完</button>
-      <button class="btn ghost" onclick="backfill()">過去取込（全員）</button></span>
-      <button class="btn ghost" onclick="refreshFollowers()">フォロワー更新</button>
+      <button class="btn ghost" id="btnDiscover" onclick="discover()">自動収集</button>
+      <span id="bfBtns"><button class="btn ghost" id="btnBackfillMissing" onclick="backfillMissing()">未取込を補完</button>
+      <button class="btn ghost" id="btnBackfill" onclick="backfill()">過去取込（全員）</button></span>
+      <button class="btn ghost" id="btnFollowers" onclick="refreshFollowers()">フォロワー更新</button>
       <button class="btn ghost" onclick="exportCsv()">CSV</button>
       <button class="btn ghost" onclick="exportData()">JSON</button>
     </div>
@@ -934,7 +934,7 @@ function renderTable(){
       <div class="acts2">
         ${r.b.dormant?`<button class="iconbtn" onclick="event.stopPropagation();wake('${esc(r.b.user_id)}')" title="再開">▶</button>`:''}
         <a class="iconbtn" href="${tcUrl(r.b.user_id)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="配信ページ">↗</a>
-        <button class="iconbtn d" onclick="event.stopPropagation();removeBroadcaster('${esc(r.b.user_id)}')" title="削除">✕</button>
+        ${ADMIN_TOKEN?`<button class="iconbtn d" onclick="event.stopPropagation();removeBroadcaster('${esc(r.b.user_id)}')" title="削除">✕</button>`:''}
       </div>
     </div>`;}).join(''):'<div class="empty">該当なし</div>';
   document.getElementById('tbl').innerHTML=hd+body;
@@ -1197,7 +1197,7 @@ function renderLookup(d){
 
 async function addById(uid){
   try{
-    const r=await fetch(API+'/config/broadcasters',{method:'POST',
+    const r=await fetch(tk(API+'/config/broadcasters'),{method:'POST',
       headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:uid})});
     const j=await r.json();
     if(!r.ok)throw new Error(j.error||'追加できませんでした');
@@ -1211,7 +1211,7 @@ async function addById(uid){
 async function addBroadcaster(){
   const el=document.getElementById('inp'),v=el.value.trim();
   if(!v)return showErr('URLを入力してください');
-  try{const r=await fetch(API+'/config/broadcasters',{method:'POST',
+  try{const r=await fetch(tk(API+'/config/broadcasters'),{method:'POST',
       headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:extractUserId(v)})});
     const j=await r.json();if(!r.ok)throw new Error(j.error||'追加できませんでした');
     el.value='';await loadAll();}catch(e){showErr('追加エラー: '+e.message);}
@@ -1227,7 +1227,7 @@ async function wake(uid){
 }
 async function discover(){
   showErr('配信中の上位を検索しています…');
-  try{const r=await fetch(API+'/discover?platform='+platform,{method:'POST'});const j=await r.json();
+  try{const r=await fetch(tk(API+'/discover?platform='+platform),{method:'POST'});const j=await r.json();
     if(!j.ok){showErr('自動収集エラー: '+(j.reason||'unknown'));return;}
     showErr(`${(j.added||[]).length}人追加／${(j.slept||[]).length}人休止（枠 ${j.auto_slots}）`);
     await loadAll();}catch(e){showErr('自動収集エラー: '+e.message);}
@@ -1235,7 +1235,7 @@ async function discover(){
 let bfTimer=null;
 async function backfillMissing(){
   try{
-    const r=await fetch(API+'/backfill-missing',{method:'POST'});
+    const r=await fetch(tk(API+'/backfill-missing'),{method:'POST'});
     const j=await r.json();
     if(j.reason==='nothing_to_do'){showErr('未取込の配信者はいません');return;}
     if(j.reason==='already_running'){showErr('すでに取り込み中です');}
@@ -1245,7 +1245,7 @@ async function backfillMissing(){
 async function backfill(){
   if(!confirm('登録中の全配信者の過去配信を取り込みます。サーバー側で実行されるので、このページを閉じても続行します。'))return;
   try{
-    const r=await fetch(API+'/backfill',{method:'POST'});
+    const r=await fetch(tk(API+'/backfill'),{method:'POST'});
     const j=await r.json();
     if(!j.started&&j.reason==='already_running') showErr('すでに取り込み中です');
     pollBackfill();
@@ -1255,7 +1255,7 @@ async function pollBackfill(){
   if(bfTimer)clearInterval(bfTimer);
   const tick=async()=>{
     try{
-      const j=await fetch(API+'/backfill/status').then(r=>r.json());
+      const j=await fetch(tk(API+'/backfill/status')).then(r=>r.json());
       if(j.running){
         showErrPersist(`過去配信を取込中… ${j.done}/${j.totalTargets}人・新規${j.imported}件・タイトル補完${j.titleFixed||0}件`);
       }else{
@@ -1277,6 +1277,14 @@ function exportData(){
 function showErr(m){document.getElementById('err').innerHTML=`<div class="err">${esc(m)}</div>`;
   setTimeout(()=>{const e=document.getElementById('err');if(e)e.innerHTML='';},6000);}
 
+// 管理トークンが無い場合は書き込み系のボタンを隠す（閲覧専用モード）
+function applyReadOnly(){
+  if(ADMIN_TOKEN) return;
+  const ids=['btnDiscover','btnBackfillMissing','btnBackfill','btnCleanup','btnFollowers'];
+  ids.forEach(id=>{const e=document.getElementById(id); if(e)e.style.display='none';});
+  const add=document.querySelector('.addbar .btn.ghost'); if(add)add.style.display='none';
+}
+
 function bindSeg(id,cb){document.getElementById(id).addEventListener('click',e=>{
   const b=e.target.closest('button');if(!b)return;
   [...b.parentNode.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');cb(b.dataset.k);});}
@@ -1297,9 +1305,10 @@ bindSeg('listFilter',k=>{listFilter=k;renderTable();});
 document.getElementById('inp').addEventListener('keydown',e=>{if(e.key==='Enter')doSearch();});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
 
+applyReadOnly();
 loadAll();
 setInterval(loadAll,10000);
-fetch(API+'/backfill/status').then(r=>r.json()).then(j=>{if(j.running)pollBackfill();}).catch(()=>{});
+fetch(tk(API+'/backfill/status')).then(r=>r.json()).then(j=>{if(j.running)pollBackfill();}).catch(()=>{});
 </script>
 </body>
 </html>
