@@ -65,9 +65,10 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
 .seg button{background:transparent;border:0;color:var(--sub);padding:9px 17px;font-size:13.5px;font-weight:700;cursor:pointer}
 .seg button.on{background:var(--accent);color:#fff}
 .ctrl{display:flex;gap:9px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
-#overall{height:440px!important}
-#cmpChart{height:440px!important;width:100%!important}
 .chartbox{position:relative;height:440px;width:100%;margin-top:14px}
+.chartbox canvas{display:block}
+.cbox .chartsm{position:relative;height:300px;width:100%}
+.cbox .chartsm canvas{display:block}
 .note{font-size:12.5px;line-height:1.7;color:#78829b;margin-top:14px}
 .warnbar{display:flex;align-items:flex-start;gap:9px;background:rgba(255,179,64,.12);
   border:1px solid rgba(255,179,64,.35);border-radius:12px;padding:11px 15px;margin-bottom:16px;
@@ -178,7 +179,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
 .kpi .v .u,.st .v .u,.bigv .u,.dl .v .u{font-size:.5em;font-weight:600;color:var(--sub);margin-left:3px}
 .cbox{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:16px}
 .cbox h3{font-size:14px;font-weight:700;margin-bottom:8px}
-.cbox canvas{height:340px!important}
+
 .hrow{display:grid;grid-template-columns:132px 76px 1fr auto;gap:14px;align-items:center;
   padding:12px 15px;background:var(--panel2);border-radius:11px;margin-bottom:7px;font-size:14px}
 .hrow .ttl{font-size:13.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--txt)}
@@ -271,7 +272,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
         <button data-k="0">全期間</button>
       </div>
     </div>
-    <canvas id="overall"></canvas>
+    <div class="chartbox"><canvas id="overall"></canvas></div>
     <div class="note" id="note"></div>
   </div>
 
@@ -435,7 +436,16 @@ const TIP={backgroundColor:'rgba(10,14,22,.985)',borderColor:'rgba(255,255,255,.
   titleFont:{size:16,weight:'800',lineHeight:1.4},
   bodyFont:{size:15,weight:'600',lineHeight:1.65},
   bodySpacing:4,titleMarginBottom:12,displayColors:false};
+const DPR=Math.max(2,Math.min(3,(window.devicePixelRatio||1)*1.5));
+try{
+  Chart.defaults.font.family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', sans-serif";
+  Chart.defaults.font.size=14;
+  Chart.defaults.font.weight='600';
+  Chart.defaults.color='#a8b4cc';
+  Chart.defaults.devicePixelRatio=DPR;
+}catch(e){}
 const NOANIM={animation:false,animations:{colors:false,x:false,y:false},
+  devicePixelRatio:DPR,resizeDelay:80,
   transitions:{active:{animation:{duration:160}}}};
 
 /* パルス */
@@ -948,8 +958,8 @@ async function renderModal(uid){
       <div class="kpi"><div class="l">定着率</div><div class="v">${S.retention==null?'—':S.retention+'<span class="u">%</span>'}</div></div>
       <div class="kpi"><div class="l">最終配信</div><div class="v" style="font-size:17px">${lastAgo==null?'—':(live?'配信中':lastAgo===0?'今日':lastAgo+'日前')}</div></div>
     </div>
-    <div class="cbox"><h3>日ごとの平均同時接続</h3>${daily.length?'<canvas id="dc"></canvas>':'<div class="empty">日次データがありません（配信記録 '+bs.length+'件）</div>'}</div>
-    ${live&&nz.length>1?'<div class="cbox" style="margin-top:14px"><h3>現在の配信（リアルタイム）</h3><canvas id="dcLive"></canvas></div>':''}
+    <div class="cbox"><h3>日ごとの平均同時接続</h3>${daily.length?'<div class="chartsm"><canvas id="dc"></canvas></div>':'<div class="empty">日次データがありません（配信記録 '+bs.length+'件）</div>'}</div>
+    ${live&&nz.length>1?'<div class="cbox" style="margin-top:14px"><h3>現在の配信（リアルタイム）</h3><div class="chartsm"><canvas id="dcLive"></canvas></div></div>':''}
     <div class="sect" style="margin-top:24px">配信ごとの記録</div>
     ${bs.length?[...bs].reverse().slice(0,60).map((x,i,arr)=>{
       const prev=arr[i+1];
@@ -1103,7 +1113,7 @@ function renderLookup(d){
       <div class="kpi"><div class="l">取得配信数</div><div class="v">${bs.length}<span class="u">本</span></div></div>
       <div class="kpi"><div class="l">最終配信</div><div class="v" style="font-size:17px">${lastAgo==null?'—':lastAgo===0?'今日':lastAgo+'日前'}</div></div>
     </div>
-    <div class="cbox"><h3>日ごとの平均同時接続</h3>${daily.length?'<canvas id="dc"></canvas>':'<div class="empty">日次データがありません（配信記録 '+bs.length+'件）</div>'}</div>
+    <div class="cbox"><h3>日ごとの平均同時接続</h3>${daily.length?'<div class="chartsm"><canvas id="dc"></canvas></div>':'<div class="empty">日次データがありません（配信記録 '+bs.length+'件）</div>'}</div>
     <div class="note" style="margin-top:10px">※このデータは追跡していないため保存されません。継続的に記録したい場合は「追跡に追加」を押してください。</div>
     <div class="sect" style="margin-top:24px">配信ごとの記録</div>
     ${bs.length?[...bs].reverse().slice(0,60).map((x,i,arr)=>{
