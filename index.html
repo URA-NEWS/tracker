@@ -778,6 +778,7 @@ function renderOverall(){
   document.getElementById('heroUnit2').textContent=sub.u;
   document.getElementById('heroVal2').parentElement.style.color=sub.c;
   document.getElementById('heroVal2').textContent=fmt(sub.v);
+  document.getElementById('heroTotalBox').style.opacity=(sub.v==null?'.45':'1');
   document.getElementById('heroTotalBox').style.display='';
 
   // ---- 前日比・先週比・先月比 ----
@@ -844,7 +845,7 @@ function renderOverall(){
               `平均同接　${fmt(r.overall_avg)} 人`,
               `総来場者　${fmt(r.overall_total_viewers)} 人`,
               `総視聴時間　${fmt(watchH[i])} 時間`,
-              `配信数　${fmt(r.broadcasts)} 本 / ${fmt(r.broadcasters)} 人`
+              `集計対象　${fmt(r.broadcasters)} 人 / ${fmt(r.broadcasts)} 本`
             ];
             return out;}}}},
       scales:{
