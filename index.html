@@ -47,6 +47,15 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
 .heroTop{display:flex;align-items:flex-end;gap:24px;flex-wrap:wrap;margin-bottom:20px}
 .bigv{font-size:52px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
 .bigl{font-size:13px;color:var(--sub);letter-spacing:.06em;font-weight:700;margin-bottom:10px}
+.pfbadge{display:inline-flex;align-items:center;gap:8px;padding:7px 15px;border-radius:999px;
+  font-size:14px;font-weight:800;letter-spacing:.02em;margin-bottom:14px}
+.pfbadge .pfdot{width:9px;height:9px;border-radius:50%}
+.pfbadge.tw{background:rgba(51,129,255,.16);color:#7fb0ff}
+.pfbadge.tw .pfdot{background:#3381ff}
+.pfbadge.kk{background:rgba(83,252,24,.14);color:#8bf75f}
+.pfbadge.kk .pfdot{background:#53fc18}
+.pfbadge.ww{background:rgba(255,132,58,.16);color:#ffab74}
+.pfbadge.ww .pfdot{background:#ff843a}
 .deltas{display:flex;gap:10px;flex-wrap:wrap;margin-left:auto}
 .dl{background:var(--panel2);border-radius:12px;padding:12px 16px;min-width:128px}
   .dl .l{font-size:11.5px;color:var(--sub);letter-spacing:.05em;margin-bottom:5px}
@@ -235,6 +244,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
     <span>このツールが追跡しているのは<b>同接上位50人</b>です。ツイキャス／Kick全体（数万人の配信者）の平均ではなく、<b>上位層の平均</b>である点にご注意ください。<br>新しい配信者を追加するとその人の過去配信も取り込まれるため、<b>過去の数値が後から変動します</b>。</span>
   </div>
   <div class="hero">
+    <div class="pfbadge tw" id="pfBadge"><span class="pfdot"></span><span id="pfBadgeText">ツイキャス</span></div>
     <div class="heroTop">
       <div>
         <div class="bigl" id="heroLabel">配信者1人あたりの平均同接（最新日）</div>
@@ -695,7 +705,12 @@ function renderOverall(){
   const peaks=rows.map(r=>r.overall_peak_avg==null?null:Number(r.overall_peak_avg));
   const tots=rows.map(r=>r.overall_total_viewers==null?null:Number(r.overall_total_viewers));
   document.getElementById('heroVal').textContent=fmt(avgs.length?avgs[avgs.length-1]:null);
-  document.getElementById('heroLabel').textContent='配信者1人あたりの平均同接（最新日）';
+  const PFN={twitcasting:['ツイキャス','tw'],kick:['Kick（日本）','kk'],whowatch:['ふわっち','ww']};
+  const pf=PFN[platform]||PFN.twitcasting;
+  const badge=document.getElementById('pfBadge');
+  if(badge){ badge.className='pfbadge '+pf[1];
+    document.getElementById('pfBadgeText').textContent=pf[0]; }
+  document.getElementById('heroLabel').textContent=pf[0]+'｜配信者1人あたりの平均同接（最新日）';
   document.getElementById('heroTotalBox').style.display='';
   document.getElementById('heroVal2').textContent=fmt(tots.length?tots[tots.length-1]:null);
 
@@ -716,8 +731,8 @@ function renderOverall(){
     +cmp(1,'前日')+cmp(7,'先週')+cmp(30,'先月');
 
   document.getElementById('note').textContent=rows.length
-    ? `${rows[0].day} 〜 ${rows[rows.length-1].day}／${rows.length}日分・のべ${rows.reduce((t,r)=>t+Number(r.broadcasts||0),0).toLocaleString('ja-JP')}配信を集計　　※まず配信者ごとにその日の平均同接を出し、それを配信者単位で平均しています（1人1票）。配信本数の多い配信者に偏らない集計です。実測した配信は実測値、過去配信は実測データから自動算出した比率で推定しています（${platform==='kick'?'総来場者×'+(RATIO_VIEW.kick||0).toFixed(3):'最高同接×'+(RATIO.twitcasting||0).toFixed(3)}）。`
-    : 'まだ集計できるデータがありません。「過去取込」を押すと一気に貯まります。';
+    ? `【${pf[0]}】${rows[0].day} 〜 ${rows[rows.length-1].day}／${rows.length}日分・のべ${rows.reduce((t,r)=>t+Number(r.broadcasts||0),0).toLocaleString('ja-JP')}配信を集計　　※まず配信者ごとにその日の平均同接を出し、それを配信者単位で平均しています（1人1票）。配信本数の多い配信者に偏らない集計です。実測した配信は実測値、過去配信は実測データから自動算出した比率で推定しています（${platform==='kick'?'総来場者×'+(RATIO_VIEW.kick||0).toFixed(3):'最高同接×'+(RATIO.twitcasting||0).toFixed(3)}）。`
+    : `【${pf[0]}】まだ集計できるデータがありません。監視を続けると翌日から集計されます。`;
 
   const win=winFor(rows.length);
   const avgMA=movingAvg(avgs,win), totMA=movingAvg(tots,win);
@@ -726,9 +741,9 @@ function renderOverall(){
   if(oChart)oChart.destroy();
   oChart=new Chart(document.getElementById('overall'),{type:'line',
     data:{labels:rows.map(r=>r.day),datasets:[
-      {label:`配信者1人あたりの平均同接（${win}日移動平均）`,data:avgMA,...lineStyle('#5b8cff'),spanGaps:true,
+      {label:`${pf[0]}｜1人あたり平均同接（${win}日移動平均）`,data:avgMA,...lineStyle('#5b8cff'),spanGaps:true,
        borderWidth:3,pointRadius:many?0:4,pointHoverRadius:7,yAxisID:'y',order:1},
-      {label:`総来場者（${win}日移動平均）`,data:totMA,...lineStyle('#2ee6a8'),
+      {label:`${pf[0]}｜総来場者（${win}日移動平均）`,data:totMA,...lineStyle('#2ee6a8'),
        spanGaps:true,backgroundColor:gradFill('#2ee6a8',false),
        borderWidth:2.6,pointRadius:many?0:4,pointHoverRadius:7,yAxisID:'y1',order:2}
     ]},
@@ -737,7 +752,7 @@ function renderOverall(){
       interaction:{mode:'index',intersect:false},
       plugins:{legend:LEGEND,
         tooltip:{...TIP,callbacks:{
-          title:it=>dayJp(rows[it[0].dataIndex].day),
+          title:it=>pf[0]+'　'+dayJp(rows[it[0].dataIndex].day),
           label:it=>{if(it.datasetIndex)return null;const i=it.dataIndex,r=rows[i];
             const out=[
               ` 1人あたり平均同接  ${fmt(r.overall_avg)} 人${r.overall_avg_measured==null?'（推定）':''}`,
