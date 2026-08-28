@@ -66,6 +66,12 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
 .seg button.on{background:var(--accent);color:#fff}
 .ctrl{display:flex;gap:9px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
 .chartbox{position:relative;height:440px;width:100%;margin-top:14px}
+.chartempty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;text-align:center;gap:10px;padding:24px;pointer-events:none}
+.chartempty .t1{font-size:17px;font-weight:800;color:var(--txt)}
+.chartempty .t2{font-size:13.5px;line-height:1.8;color:var(--sub);max-width:640px}
+.chartempty .t3{display:inline-block;margin-top:6px;font-size:12.5px;color:#ffcd7a;
+  background:rgba(255,179,64,.12);border:1px solid rgba(255,179,64,.3);border-radius:10px;padding:8px 14px}
 .chartbox canvas{display:block}
 .cbox .chartsm{position:relative;height:300px;width:100%}
 .cbox .chartsm canvas{display:block}
@@ -272,7 +278,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
         <button data-k="0">全期間</button>
       </div>
     </div>
-    <div class="chartbox"><canvas id="overall"></canvas></div>
+    <div class="chartbox"><canvas id="overall"></canvas><div id="overallEmpty"></div></div>
     <div class="note" id="note"></div>
   </div>
 
@@ -404,7 +410,7 @@ function movingAvg(arr,win){
   }
   return out;
 }
-const winFor=n=>n<=31?3:n<=95?7:n<=200?14:30;
+const winFor=n=>n<=7?1:n<=31?3:n<=95?7:n<=200?14:30;
 const mean=a=>a.length?Math.round(a.reduce((t,v)=>t+v,0)/a.length):null;
 const dayJp=d=>{const x=new Date(d+'T00:00:00+09:00');
   return `${x.getMonth()+1}/${x.getDate()}(${'日月火水木金土'[x.getDay()]})`;};
@@ -795,6 +801,24 @@ function renderOverall(){
   document.getElementById('note').textContent=rows.length
     ? `【${pf[0]}】${rows[0].day} 〜 ${rows[rows.length-1].day}／${rows.length}日分・のべ${rows.reduce((t,r)=>t+Number(r.broadcasts||0),0).toLocaleString('ja-JP')}配信を集計${partial?'（本日はまだ集計途中のためグラフから除外しています）':''}　※まず配信者ごとにその日の平均同接を出し、それを配信者単位で平均しています（1人1票）。実測した配信は実測値、過去配信は実測データから算出した比率で推定しています${RATIO[platform]?`（最高同接×${RATIO[platform].toFixed(3)}）`:'（このプラットフォームは実測不足のため推定なし・実測日のみ表示）'}。配信者が10人未満の日は数値が振れすぎるため表示していません。`
     : `【${pf[0]}】まだ集計できるデータがありません。監視を続けると翌日から集計されます。`;
+
+  // 表示できる値が無いときは理由を出す
+  const nValid=vals.filter(v=>v!=null).length;
+  const emptyBox=document.getElementById('overallEmpty');
+  if(emptyBox){
+    if(nValid===0){
+      const thin=rows.filter(r=>Number(r.broadcasters||0)<10).length;
+      emptyBox.innerHTML=`<div class="chartempty">
+        <div class="t1">この期間に表示できる${mm.label}のデータがありません</div>
+        <div class="t2">${
+          rows.length===0
+            ? 'まだ集計対象の配信記録がありません。監視を続けると翌日から集計されます。'
+            : `対象期間の${rows.length}日中${thin}日は、その日に記録できた配信者が10人未満でした。少人数の日は平均が大きく振れて誤解を招くため、数値を出していません。`
+        }${partial?`<br>本日は集計途中のためグラフから除外しています（現在の値は右上に表示中）。`:''}</div>
+        ${partial?`<div class="t3">本日（集計中）　${fmt(mm.get(partial))} ${mm.unit}</div>`:''}
+      </div>`;
+    } else emptyBox.innerHTML='';
+  }
 
   const win=winFor(rows.length);
   const valMA=movingAvg(vals,win);
