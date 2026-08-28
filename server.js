@@ -24,7 +24,8 @@ const USE_KICK = !!(KICK_ID && KICK_SECRET);
 const KICK_LIMIT = 50;
 const SAMPLE_RETENTION_DAYS = 3;   // 生サンプルの保持日数
 const MONITOR_CONCURRENCY = 20;    // 監視の並列数
-const MISS_TOLERANCE = 3;          // 連続でこの回数取れなければ配信終了とみなす
+const MISS_TOLERANCE = 5;          // 一時的な取得失敗で配信終了と誤判定しないための猶予          // 連続でこの回数取れなければ配信終了とみなす
+const RESUME_WINDOW_MS = 20 * 60 * 1000;  // 直前の配信からこの時間内なら「同じ配信の再開」とみなす
 const HISTORY_KEEP = 40;           // メモリに保持する直近配信数（集計はDB側で行う）
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 let kickToken = null, kickTokenExp = 0;
@@ -1424,8 +1425,11 @@ async function checkOne(bc, now) {
     const hit = (live || []).find(x => x.user_id === uid);
     if (hit) s = { concurrent: hit.viewers, total: 0, timestamp: new Date().toISOString(), category: hit.category || null };
     else {
+      // 一覧は上位100件しか返さないため、載っていない場合は必ず個別に確認する
       const ch = await fetchKickChannel(kickSlug(uid));
-      s = (ch && ch.live) ? { concurrent: ch.viewers, total: 0, timestamp: new Date().toISOString() } : null;
+      s = (ch && ch.live)
+        ? { concurrent: ch.viewers, total: 0, timestamp: new Date().toISOString(), title: ch.title || null }
+        : null;
     }
   } else {
     s = await fetchBroadcastStats(uid);
@@ -1433,6 +1437,29 @@ async function checkOne(bc, now) {
 
   if (s) {
     if (!wasLive) {
+      // 直前の配信が20分以内に終わっていれば、誤判定による分割とみなして再開する
+      const hist = broadcasterStats[uid].history;
+      const prev = hist.length ? hist[hist.length - 1] : null;
+      if (prev && prev.source === 'live' && prev.ended_at &&
+          (Date.now() - new Date(prev.ended_at).getTime()) < RESUME_WINDOW_MS) {
+        hist.pop();
+        prev.ended_at = null;
+        prev.miss = 0;
+        if (!prev.title && s.title) prev.title = s.title;
+        prev.samples = prev.samples || [];
+        prev.samples.push(s);
+        broadcasterStats[uid].current_broadcast = prev;
+        console.log(`[${uid}] 配信を再開として統合`);
+        try {
+          await persistSample(uid, prev.broadcast_id, s);
+          if (USE_SB) await sb('PATCH', 'tw_broadcasts', {
+            query: `?id=eq.${encodeURIComponent(prev.broadcast_id)}`,
+            body: { ended_at: null }
+          });
+        } catch (e) { console.error('resume:', e.message); }
+        return;
+      }
+
       const b = {
         broadcast_id: `${uid}_${Date.now()}`, started_at: s.timestamp,
         samples: [s], source: 'live', platform: bc.platform || 'twitcasting',
@@ -1734,6 +1761,7 @@ const server = http.createServer((req, res) => {
 
   // Kickのスラッグを解決し直す: POST /api/kick-resolve
   if (pathname === '/api/kick-resolve' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return;
     (async () => {
       const targets = config.broadcasters.filter(b => b.platform === 'kick');
       let ok = 0, ng = 0;
@@ -1751,6 +1779,7 @@ const server = http.createServer((req, res) => {
 
   // Kick 非公開API疎通テスト: GET /api/kick-probe/<slug>
   if (pathname.startsWith('/api/kick-probe/') && req.method === 'GET') {
+    if (!requireAdmin(req, res)) return;
     (async () => {
       const slug = decodeURIComponent(pathname.replace('/api/kick-probe/', ''));
       const r = await kickProbe(slug);
@@ -1889,6 +1918,7 @@ const server = http.createServer((req, res) => {
 
   // サンプル圧縮を今すぐ実行: POST /api/compact
   if (pathname === '/api/compact' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return;
     (async () => {
       const r = await compactSamples();
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1938,6 +1968,7 @@ const server = http.createServer((req, res) => {
 
   // ふわっちAPI総当たり診断: GET /api/probe-ww/<user_path>
   if (pathname.startsWith('/api/probe-ww/') && req.method === 'GET') {
+    if (!requireAdmin(req, res)) return;
     (async () => {
       const path = decodeURIComponent(pathname.replace('/api/probe-ww/', ''));
       const live = await getWWLive();
@@ -1981,6 +2012,7 @@ const server = http.createServer((req, res) => {
 
   // ふわっちの過去配信APIを診断: GET /api/debug-ww/<user_path>
   if (pathname.startsWith('/api/debug-ww/') && req.method === 'GET') {
+    if (!requireAdmin(req, res)) return;
     (async () => {
       const path = decodeURIComponent(pathname.replace('/api/debug-ww/', ''));
       const out = { user_path: path };
@@ -2001,6 +2033,7 @@ const server = http.createServer((req, res) => {
 
   // フォロワー抽出の診断: GET /api/debug-fans/<id>
   if (pathname.startsWith('/api/debug-fans/') && req.method === 'GET') {
+    if (!requireAdmin(req, res)) return;
     (async () => {
       const uid = decodeURIComponent(pathname.replace('/api/debug-fans/', ''));
       const out = { user_id: uid };
@@ -2068,6 +2101,7 @@ const server = http.createServer((req, res) => {
 
   // 生データ確認: GET /api/debug-user/<id>
   if (pathname.startsWith('/api/debug-user/') && req.method === 'GET') {
+    if (!requireAdmin(req, res)) return;
     (async () => {
       const uid = decodeURIComponent(pathname.replace('/api/debug-user/', ''));
       const out = { user_id: uid };
@@ -2344,6 +2378,7 @@ const server = http.createServer((req, res) => {
 
   // 自動収集を今すぐ実行: POST /api/discover
   if (pathname === '/api/discover' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return;
     (async () => {
       const plat = (url.parse(req.url, true).query.platform) || 'twitcasting';
       const r = plat === 'kick' ? await discoverKick()
@@ -2384,6 +2419,7 @@ const server = http.createServer((req, res) => {
 
   // 未取込の配信者だけ取り込む: POST /api/backfill-missing
   if (pathname === '/api/backfill-missing' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return;
     (async () => {
       if (backfillJob.running) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2412,6 +2448,7 @@ const server = http.createServer((req, res) => {
 
   // 過去配信の取り込み（バックグラウンド実行）: POST /api/backfill[/<user_id>]
   if (pathname.startsWith('/api/backfill') && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return;
     const spec = pathname.replace('/api/backfill', '').replace(/^\//, '');
     const targets = spec ? [decodeURIComponent(spec)] : config.broadcasters.map(b => b.user_id);
     if (backfillJob.running) {
@@ -2549,6 +2586,7 @@ const server = http.createServer((req, res) => {
   }
 
   if (pathname === '/api/config/broadcasters' && req.method === 'POST') {
+    if (!requireAdmin(req, res)) return;
     let body = '';
     req.on('data', c => body += c);
     req.on('end', async () => {
