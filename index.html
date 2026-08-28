@@ -721,6 +721,52 @@ function renderOverall(){
   const tots=rows.map(r=>r.overall_total_viewers==null?null:Number(r.overall_total_viewers));
   const watchH=rows.map(r=>r.total_watch_sec==null?null:Math.round(Number(r.total_watch_sec)/3600));
 
+  // ---- プラットフォーム表示 ----
+  const PFN={twitcasting:['ツイキャス','tw'],kick:['Kick（日本）','kk'],whowatch:['ふわっち','ww']};
+  const pf=PFN[platform]||PFN.twitcasting;
+  const badge=document.getElementById('pfBadge');
+  if(badge){ badge.className='pfbadge '+pf[1];
+    document.getElementById('pfBadgeText').textContent=pf[0]; }
+  document.getElementById('heroLabel').textContent=pf[0]+'｜'+mm.label+'（最新日）';
+
+  // ---- 大きな数字 ----
+  document.getElementById('heroVal').textContent=fmt(vals.length?vals[vals.length-1]:null);
+  document.getElementById('heroUnit').textContent=mm.unit;
+
+  const sub = metric==='total'
+    ? {l:'総視聴時間・合計（最新日）',u:'時間',v:watchH.length?watchH[watchH.length-1]:null,c:'#ffb340'}
+    : metric==='watch'
+      ? {l:'総来場者・合計（最新日）',u:'人',v:tots.length?tots[tots.length-1]:null,c:'#2ee6a8'}
+      : {l:'総来場者・合計（最新日）',u:'人',v:tots.length?tots[tots.length-1]:null,c:'#2ee6a8'};
+  const hl2=document.getElementById('heroLabel2');
+  if(hl2){ hl2.textContent=sub.l; hl2.style.color=sub.c; }
+  document.getElementById('heroUnit2').textContent=sub.u;
+  document.getElementById('heroVal2').parentElement.style.color=sub.c;
+  document.getElementById('heroVal2').textContent=fmt(sub.v);
+  document.getElementById('heroTotalBox').style.display='';
+
+  // ---- 前日比・先週比・先月比 ----
+  const cmp=(days,label)=>{
+    const all=doneAll.map(r=>Number(mm.get(r)||0));
+    if(all.length<2)return`<div class="dl"><div class="l">${label}</div><div class="v flat">—</div></div>`;
+    const recent=mean(all.slice(-days)),prev=mean(all.slice(-days*2,-days));
+    if(prev==null||!prev)return`<div class="dl"><div class="l">${label}</div><div class="v flat">—</div></div>`;
+    const p=Math.round((recent-prev)/prev*100);
+    const cls=p>0?'up':p<0?'down':'flat';
+    return`<div class="dl"><div class="l">${label}</div>
+      <div class="v ${cls}">${p>0?'▲ +':p<0?'▼ ':'± '}${Math.abs(p)}%</div></div>`;
+  };
+  document.getElementById('deltas').innerHTML=
+    (partial?`<div class="dl" style="background:rgba(255,179,64,.12);border:1px solid rgba(255,179,64,.3)">
+      <div class="l" style="color:#ffb340">本日（集計中）</div>
+      <div class="v" style="color:#ffb340">${fmt(mm.get(partial))}<span class="u">${mm.unit}</span></div></div>`:'')
+    +cmp(1,'前日比')+cmp(7,'先週比')+cmp(30,'先月比');
+
+  // ---- 説明文 ----
+  document.getElementById('note').textContent=rows.length
+    ? `【${pf[0]}】${rows[0].day} 〜 ${rows[rows.length-1].day}／${rows.length}日分・のべ${rows.reduce((t,r)=>t+Number(r.broadcasts||0),0).toLocaleString('ja-JP')}配信を集計${partial?'（本日はまだ集計途中のためグラフから除外しています）':''}　※まず配信者ごとにその日の平均同接を出し、それを配信者単位で平均しています（1人1票）。実測した配信は実測値、過去配信は実測データから自動算出した比率で推定しています。`
+    : `【${pf[0]}】まだ集計できるデータがありません。監視を続けると翌日から集計されます。`;
+
   const win=winFor(rows.length);
   const valMA=movingAvg(vals,win);
   const many=rows.length>45;
