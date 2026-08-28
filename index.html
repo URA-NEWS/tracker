@@ -372,6 +372,8 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
 
 <script>
 const API=location.origin+'/api';
+const ADMIN_TOKEN=new URLSearchParams(location.search).get('token')||'';
+const tk=(u)=>ADMIN_TOKEN?(u+(u.includes('?')?'&':'?')+'token='+encodeURIComponent(ADMIN_TOKEN)):u;
 let config={broadcasters:[]},stats={},overall=[];
 let oChart=null,dChart=null,openUid=null;
 let platform='twitcasting';
@@ -482,13 +484,12 @@ function broadcastsOf(st){if(!st)return[];
       started_at:b.started_at,live:false,archive:true,avg:null,peak:b.peak??null,total:b.total_final||0,
       title:b.title||null,duration:b.duration||0};
     return null;}).filter(Boolean).sort((a,b)=>a.t-b.t);}
-let RATIO={twitcasting:0.879,kick:0.857,whowatch:0.85};
-let RATIO_VIEW={twitcasting:0.120,kick:0.169,whowatch:0.15};
+let RATIO={},RATIO_VIEW={};   // サーバー(tw_ratio_mv)の実測値のみを使う
 // 平均同接: 実測があれば実測、無ければ最高同接から推定
 function valOf(x){
   if(x.avg!=null)return x.avg;
-  if(x.peak!=null)return Math.round(x.peak*(RATIO[platform]||0.88));
-  if(x.total)return Math.round(x.total*(RATIO_VIEW[platform]||0.15));
+  if(x.peak!=null&&RATIO[platform])return Math.round(x.peak*RATIO[platform]);
+  if(x.total&&RATIO_VIEW[platform])return Math.round(x.total*RATIO_VIEW[platform]);
   return null;
 }
 const isEstimated=x=>x.avg==null;
@@ -544,17 +545,25 @@ function trendOf(bs){
 
 async function loadAll(){
   try{
+    const heavy = (!overall.length) || (Date.now()-lastHeavy>120000) || heavyKey!==platform;
     const [c,st,ov,rt]=await Promise.all([
       fetch(API+'/config').then(r=>r.json()),
       fetch(API+'/twitcas/stats?platform='+platform).then(r=>r.json()),
-      fetch(API+'/overall?platform='+platform).then(r=>r.json()),
-      fetch(API+'/ratio').then(r=>r.json()).catch(()=>null)]);
+      heavy?fetch(API+'/overall?platform='+platform).then(r=>r.json()):Promise.resolve(null),
+      heavy?fetch(API+'/ratio').then(r=>r.json()).catch(()=>null):Promise.resolve(null)]);
+    if(heavy){ lastHeavy=Date.now(); heavyKey=platform; }
     config=(c&&c.broadcasters)?c:{broadcasters:[]};
     stats=st||{};
-    overall=Array.isArray(ov)?ov:[];
+    if(ov!==null){
+      overall=Array.isArray(ov)?ov:(ov&&Array.isArray(ov.data)?ov.data:[]);
+      if(!Array.isArray(overall))overall=[];
+    }
     if(Array.isArray(rt))rt.forEach(r=>{
-      if(r.ratio_peak)RATIO[r.platform]=Number(r.ratio_peak);
-      if(r.ratio_view)RATIO_VIEW[r.platform]=Number(r.ratio_view);
+      // 実測30件以上の比率のみ採用する
+      if(r.ratio_peak&&Number(r.ratio_peak_n)>=30)RATIO[r.platform]=Number(r.ratio_peak);
+      else delete RATIO[r.platform];
+      if(r.ratio_view&&Number(r.ratio_view_n)>=30)RATIO_VIEW[r.platform]=Number(r.ratio_view);
+      else delete RATIO_VIEW[r.platform];
     });
     render();
     document.getElementById('lastUpdate').textContent=
@@ -577,7 +586,13 @@ function showTab(k){
 
 async function loadCompare(){
   try{
-    const rows=await fetch(API+'/compare').then(r=>r.json());
+    const raw=await fetch(API+'/compare').then(r=>r.json());
+    const rows=Array.isArray(raw)?raw:(raw&&Array.isArray(raw.data)?raw.data:[]);
+    if(!rows.length){
+      document.getElementById('cmpStats').innerHTML='<div class="empty">比較できるデータがまだありません</div>';
+      if(cmpChart){cmpChart.destroy();cmpChart=null;}
+      return;
+    }
     const byP={twitcasting:[],kick:[],whowatch:[]};
     rows.forEach(r=>{ if(byP[r.platform])byP[r.platform].push(r); });
     const tj=todayJst();
@@ -680,7 +695,7 @@ async function refreshFollowers(){
   const reset=confirm('OK: 既存の値を破棄して全件取り直す ／ キャンセル: 未取得のみ更新');
   showErrPersist('フォロワーを取得中…（1〜2分かかります）');
   try{
-    const j=await fetch(API+(reset?'/reset-followers':'/refresh-followers'),{method:'POST'}).then(r=>r.json());
+    const j=await fetch(tk(API+(reset?'/reset-followers':'/refresh-followers')),{method:'POST'}).then(r=>r.json());
     showErr(`フォロワー取得済み ${j.after}/${j.total}人（前回 ${j.before}人）`);
     await loadAll();
   }catch(e){showErr('エラー: '+e.message);}
@@ -778,7 +793,7 @@ function renderOverall(){
 
   // ---- 説明文 ----
   document.getElementById('note').textContent=rows.length
-    ? `【${pf[0]}】${rows[0].day} 〜 ${rows[rows.length-1].day}／${rows.length}日分・のべ${rows.reduce((t,r)=>t+Number(r.broadcasts||0),0).toLocaleString('ja-JP')}配信を集計${partial?'（本日はまだ集計途中のためグラフから除外しています）':''}　※まず配信者ごとにその日の平均同接を出し、それを配信者単位で平均しています（1人1票）。実測した配信は実測値、過去配信は実測データから自動算出した比率で推定しています。`
+    ? `【${pf[0]}】${rows[0].day} 〜 ${rows[rows.length-1].day}／${rows.length}日分・のべ${rows.reduce((t,r)=>t+Number(r.broadcasts||0),0).toLocaleString('ja-JP')}配信を集計${partial?'（本日はまだ集計途中のためグラフから除外しています）':''}　※まず配信者ごとにその日の平均同接を出し、それを配信者単位で平均しています（1人1票）。実測した配信は実測値、過去配信は実測データから算出した比率で推定しています${RATIO[platform]?`（最高同接×${RATIO[platform].toFixed(3)}）`:'（このプラットフォームは実測不足のため推定なし・実測日のみ表示）'}。配信者が10人未満の日は数値が振れすぎるため表示していません。`
     : `【${pf[0]}】まだ集計できるデータがありません。監視を続けると翌日から集計されます。`;
 
   const win=winFor(rows.length);
@@ -907,6 +922,7 @@ function closeModal(){openUid=null;modalData=null;lookupCache=null;document.getE
   if(dChart){dChart.destroy();dChart=null;}}
 
 let modalData=null;
+let lastHeavy=0, heavyKey='';
 async function renderModal(uid){
   const b=config.broadcasters.find(x=>x.user_id===uid); if(!b) return closeModal();
   const S=stats[uid]||{};
@@ -1178,11 +1194,11 @@ async function addBroadcaster(){
 }
 async function removeBroadcaster(uid){
   if(!confirm('削除しますか？（記録も消えます）'))return;
-  try{await fetch(API+'/config/broadcasters/'+encodeURIComponent(uid),{method:'DELETE'});
+  try{await fetch(tk(API+'/config/broadcasters/'+encodeURIComponent(uid)),{method:'DELETE'});
     if(openUid===uid)closeModal();await loadAll();}catch(e){showErr('削除エラー: '+e.message);}
 }
 async function wake(uid){
-  try{await fetch(API+'/wake/'+encodeURIComponent(uid),{method:'POST'});
+  try{await fetch(tk(API+'/wake/'+encodeURIComponent(uid)),{method:'POST'});
     showErr('監視を再開しました');await loadAll();}catch(e){showErr('エラー: '+e.message);}
 }
 async function discover(){
@@ -1240,7 +1256,7 @@ function showErr(m){document.getElementById('err').innerHTML=`<div class="err">$
 function bindSeg(id,cb){document.getElementById(id).addEventListener('click',e=>{
   const b=e.target.closest('button');if(!b)return;
   [...b.parentNode.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');cb(b.dataset.k);});}
-bindSeg('platform',k=>{platform=k;closeModal();clearSearch();loadAll();
+bindSeg('platform',k=>{platform=k;overall=[];lastHeavy=0;closeModal();clearSearch();loadAll();
   if(mainTab==='heatmap')loadHeatmap();
   if(mainTab==='duration')loadDuration();
   if(mainTab==='alerts')loadAlerts();});
