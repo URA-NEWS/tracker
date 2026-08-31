@@ -100,8 +100,8 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
 
 /* ===== 個別リスト（表のみ） ===== */
 .tbl{background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden}
-.thd,.trow{display:grid;grid-template-columns:34px 44px minmax(160px,2.2fr) 100px 118px 104px 62px;
-  gap:12px;align-items:center;padding:13px 16px}
+.thd,.trow{display:grid;grid-template-columns:32px 42px minmax(150px,2fr) 96px 96px 112px 100px 60px;
+  gap:11px;align-items:center;padding:13px 15px}
 .thd{background:var(--panel2);font-size:12px;color:var(--sub);letter-spacing:.06em;font-weight:800}
 .trow{border-top:1px solid var(--line);cursor:pointer;transition:.14s}
 .trow:hover{background:#1a2132}
@@ -126,8 +126,12 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
   display:flex;align-items:center;justify-content:center;text-decoration:none}
 .iconbtn:hover{color:var(--txt);border-color:#3a4665}
 .iconbtn.d:hover{color:var(--live)}
+@media(max-width:1100px){
+  .thd,.trow{grid-template-columns:28px 36px 1fr 96px 96px 60px}
+  .hidemd{display:none}
+}
 @media(max-width:820px){
-  .thd,.trow{grid-template-columns:26px 34px 1fr 92px 62px}
+  .thd,.trow{grid-template-columns:26px 34px 1fr 96px 60px}
   .hidesm{display:none}
 }
 .empty{text-align:center;padding:44px 20px;color:var(--sub);font-size:13.5px}
@@ -295,6 +299,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;
       <button data-k="d30">30日平均順</button>
       <button data-k="best">最高同接順</button>
       <button data-k="fol">フォロワー順</button>
+      <button data-k="folRate">対フォロワー率順</button>
       <button data-k="name">名前順</button>
     </div>
     <div class="seg" id="listFilter">
@@ -883,12 +888,24 @@ function renderTable(){
   let rows=bcList().map(b=>{
     const S=stats[b.user_id]||{};
     const lastAgo=S.lastTs?Math.floor((Date.now()-S.lastTs)/864e5):null;
+  const folRateM=(b.follower_count&&S.allAvg!=null)?Math.round(S.allAvg/b.follower_count*1000)/10:null;
     const vsAll=(S.allAvg&&S.recent!=null)?Math.round((S.recent-S.allAvg)/S.allAvg*100):null;
     return{b,live:!!S.live,cur:S.cur??null,
       allAvg:S.allAvg??null,recent:S.recent??null,vsAll,
       n:S.n||0,best:S.best??null,d30:S.d30avg??null,n30:S.d30n||0,
-      lastAgo,fol:b.follower_count??null,ret:S.retention??null};
+      lastAgo,fol:b.follower_count??null,ret:S.retention??null,
+      folRate:(b.follower_count&&S.allAvg!=null)?Math.round(S.allAvg/b.follower_count*1000)/10:null,
+      folRateColor:'inherit'};
   });
+  // 対フォロワー率は相対評価で色を付ける（中央値の1.5倍以上=緑、0.5倍以下=赤）
+  {
+    const rs=rows.map(r=>r.folRate).filter(v=>v!=null).sort((a,b)=>a-b);
+    const med=rs.length?rs[Math.floor(rs.length/2)]:null;
+    rows.forEach(r=>{
+      if(r.folRate==null||!med){r.folRateColor='var(--sub)';return;}
+      r.folRateColor = r.folRate>=med*1.5?'var(--ok)':r.folRate<=med*0.5?'var(--live)':'var(--txt)';
+    });
+  }
   if(listFilter==='dormant')rows=rows.filter(r=>r.b.dormant);
   else{
     rows=rows.filter(r=>!r.b.dormant);
@@ -898,6 +915,7 @@ function renderTable(){
   rows.sort((a,b)=>{
     if(listSort==='name')return String(a.b.name).localeCompare(String(b.b.name),'ja');
     if(listSort==='fol')return (b.fol||0)-(a.fol||0);
+    if(listSort==='folRate')return (b.folRate||0)-(a.folRate||0);
     if(listSort==='d30')return (b.d30||0)-(a.d30||0);
     if(listSort==='best')return (b.best||0)-(a.best||0);
     if(listSort==='freq')return (b.n30||0)-(a.n30||0);
@@ -911,8 +929,9 @@ function renderTable(){
   });
 
   const hd=`<div class="thd"><span></span><span></span><span>配信者</span>
-    <span style="text-align:right" class="hidesm">フォロワー<br><span style="font-weight:400">（人）</span></span>
-    <span style="text-align:right">全体の平均同接<br><span style="font-weight:400">（全配信の平均・人）</span></span>
+    <span style="text-align:right" class="hidemd">フォロワー<br><span style="font-weight:400">（人）</span></span>
+    <span style="text-align:right">全体の平均同接<br><span style="font-weight:400">（人）</span></span>
+    <span style="text-align:right" class="hidesm">対フォロワー<br><span style="font-weight:400">（同接÷フォロワー）</span></span>
     <span style="text-align:right">最新配信の増減率<br><span style="font-weight:400">（全体平均との比）</span></span>
     <span></span></div>`;
 
@@ -929,8 +948,9 @@ function renderTable(){
           <span class="tag ${r.b.pinned?'pin':''}">${r.b.pinned?'手動':'自動'}</span>
           ${r.b.dormant?'<span class="tag dor">休止</span>':''}</div>
       </div>
-      <div class="v2 hidesm">${fmt(r.fol)}<span class="u">人</span><small>フォロワー</small></div>
+      <div class="v2 hidemd">${fmt(r.fol)}<span class="u">人</span><small>フォロワー</small></div>
       <div class="v2">${fmt(r.allAvg)}<span class="u">人</span><small>全${r.n}配信の平均</small></div>
+      <div class="v2 hidesm" style="color:${r.folRateColor}">${r.folRate==null?'—':r.folRate+'<span class="u">%</span>'}<small>${r.folRate==null?'':'1,000人あたり '+fmt(Math.round(r.folRate*10))+'人'}</small></div>
       <div class="pct ${cls}">${pct}<small style="display:block;font-size:10px;color:#5f6a83;font-weight:600;margin-top:2px">最新 ${fmt(r.recent)}人${r.live?'（配信中）':''}</small></div>
       <div class="acts2">
         ${r.b.dormant?`<button class="iconbtn" onclick="event.stopPropagation();wake('${esc(r.b.user_id)}')" title="再開">▶</button>`:''}
@@ -974,6 +994,7 @@ async function renderModal(uid){
   try{ if(dChart){dChart.destroy();} }catch(e){} dChart=null;
   try{ if(liveChart){liveChart.destroy();} }catch(e){} liveChart=null;
   const lastAgo=S.lastTs?Math.floor((Date.now()-S.lastTs)/864e5):null;
+  const folRateM=(b.follower_count&&S.allAvg!=null)?Math.round(S.allAvg/b.follower_count*1000)/10:null;
 
   document.getElementById('modal').innerHTML=`
     <div class="mh">
@@ -997,6 +1018,7 @@ async function renderModal(uid){
       <div class="kpi"><div class="l">30日の配信数</div><div class="v">${S.d30n||0}<span class="u">本</span></div></div>
       <div class="kpi"><div class="l">最高同接</div><div class="v">${fmt(S.best)}<span class="u">人</span></div></div>
       <div class="kpi"><div class="l">定着率</div><div class="v">${S.retention==null?'—':S.retention+'<span class="u">%</span>'}</div></div>
+      <div class="kpi" style="background:rgba(46,230,168,.12)"><div class="l">対フォロワー（同接÷フォロワー）</div><div class="v">${folRateM==null?'—':folRateM+'<span class="u">%</span>'}</div></div>
       <div class="kpi"><div class="l">最終配信</div><div class="v" style="font-size:17px">${lastAgo==null?'—':(live?'配信中':lastAgo===0?'今日':lastAgo+'日前')}</div></div>
     </div>
     <div class="cbox"><h3>日ごとの平均同時接続</h3>${daily.length?'<div class="chartsm"><canvas id="dc"></canvas></div>':'<div class="empty">日次データがありません（配信記録 '+bs.length+'件）</div>'}</div>
